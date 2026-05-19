@@ -8,17 +8,7 @@ import {
   YAxis,
 } from 'recharts'
 import Sidebar from '../components/layout/Sidebar.jsx'
-
-const PAIR_LIST_KEYS = [
-  'BTC/USDT',
-  'ETH/USDT',
-  'GOLD/USDT',
-  'OIL/USDT',
-  'SOL/USDT',
-  'BNB/USDT',
-  'XAG/USDT',
-  'DOGE/USDT',
-]
+import { pricesAPI } from '../services/api'
 
 const MID_PRICE = {
   'GOLD/USDT': 2341.8,
@@ -133,18 +123,42 @@ export default function Trading() {
     }
   }, [])
 
-  const pairList = PAIR_LIST_KEYS.map((sym) => ({
+  useEffect(() => {
+    const fallbackTimer = setTimeout(async () => {
+      if (!connected && Object.keys(prices).length === 0) {
+        try {
+          const res = await pricesAPI.getAll()
+          setPrices(res.data.data)
+        } catch (err) {
+          console.error('Fallback price fetch failed:', err)
+        }
+      }
+    }, 5000)
+    return () => clearTimeout(fallbackTimer)
+  }, [connected, prices])
+
+  const pairList = [
+    'BTC/USDT',
+    'ETH/USDT',
+    'GOLD/USDT',
+    'OIL/USDT',
+    'SOL/USDT',
+    'BNB/USDT',
+    'XAG/USDT',
+    'DOGE/USDT',
+  ].map((sym) => ({
     sym,
-    price:
-      prices[sym]?.price != null && prices[sym]?.price !== ''
-        ? Number(prices[sym].price).toLocaleString()
-        : '...',
+    price: prices[sym]?.price
+      ? `$${Number(prices[sym].price).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
+      : '...',
     chg:
-      prices[sym]?.change24h != null &&
-      Number.isFinite(Number(prices[sym].change24h))
-        ? `${Number(prices[sym].change24h) > 0 ? '+' : ''}${Number(prices[sym].change24h).toFixed(2)}%`
+      prices[sym]?.change24h !== undefined
+        ? `${prices[sym].change24h >= 0 ? '+' : ''}${prices[sym].change24h.toFixed(2)}%`
         : '...',
-    up: (Number(prices[sym]?.change24h) || 0) >= 0,
+    up: (prices[sym]?.change24h || 0) >= 0,
   }))
 
   const selPriceNum = Number(prices[pair]?.price)
@@ -255,7 +269,7 @@ export default function Trading() {
                       fontFamily: "'DM Mono', monospace",
                     }}
                   >
-                    {item.price === '...' ? '...' : `$${item.price}`}
+                    {item.price}
                   </span>
                   <span
                     style={{
@@ -339,7 +353,7 @@ export default function Trading() {
                       color: active ? 'var(--gold-light)' : 'var(--text3)',
                     }}
                   >
-                    {item.price === '...' ? '...' : `$${item.price}`}
+                    {item.price}
                     <span
                       style={{
                         marginLeft: '6px',
@@ -391,28 +405,29 @@ export default function Trading() {
                     }}
                   >
                     {connected ? (
-                      <>
-                        <span className="trading-pulse-dot" />
-                        <span
-                          style={{
-                            fontSize: '10px',
-                            fontWeight: 700,
-                            letterSpacing: '0.14em',
-                            color: 'var(--emerald)',
-                          }}
-                        >
-                          LIVE
-                        </span>
-                      </>
-                    ) : (
                       <span
                         style={{
-                          fontSize: '10px',
-                          fontWeight: 600,
-                          letterSpacing: '0.06em',
-                          color: 'var(--text3)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontSize: '0.65rem',
+                          color: 'var(--emerald)',
                         }}
                       >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: 'var(--emerald)',
+                            animation: 'pulsedot 1.5s infinite',
+                            display: 'inline-block',
+                          }}
+                        />
+                        LIVE
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.65rem', color: 'var(--text3)' }}>
                         Connecting...
                       </span>
                     )}
@@ -1002,17 +1017,9 @@ export default function Trading() {
         .trading-ticker-dupe:hover {
           animation-play-state: paused;
         }
-        .trading-pulse-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: var(--emerald);
-          flex-shrink: 0;
-          animation: trading-live-pulse 1.2s ease-in-out infinite;
-        }
-        @keyframes trading-live-pulse {
+        @keyframes pulsedot {
           0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.55; transform: scale(0.88); }
+          50% { opacity: 0.45; transform: scale(0.85); }
         }
       `}</style>
     </div>
