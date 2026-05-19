@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar.jsx'
+import { walletAPI } from '../services/api'
 
 const card = {
   background: 'var(--navy-card)',
@@ -16,57 +17,25 @@ const labelUpper = {
   color: 'var(--text3)',
 }
 
-const ASSETS = [
-  {
-    id: 'gold',
-    label: 'Digital Gold (Au)',
-    balance: '8.24g',
-    usd: '$19,716',
-    h24: '+1.84%',
-    up: true,
-  },
-  {
-    id: 'btc',
-    label: 'Bitcoin (₿)',
-    balance: '0.1312 BTC',
-    usd: '$13,624',
-    h24: '+2.14%',
-    up: true,
-  },
-  {
-    id: 'eth',
-    label: 'Ethereum (Ξ)',
-    balance: '2.281 ETH',
-    usd: '$8,717',
-    h24: '+1.76%',
-    up: true,
-  },
-  {
-    id: 'usdt',
-    label: 'USDT ($)',
-    balance: '6,263.64',
-    usd: '$6,264',
-    h24: '+0.01%',
-    up: true,
-  },
-  {
-    id: 'sol',
-    label: 'Solana (◎)',
-    balance: '0.000',
-    usd: '$0.00',
-    h24: '+3.41%',
-    up: true,
-  },
-]
+function assetLabel(asset) {
+  if (asset === 'BTC') return 'Bitcoin'
+  if (asset === 'ETH') return 'Ethereum'
+  if (asset === 'GOLD') return 'Digital Gold'
+  if (asset === 'USDT') return 'Tether USD'
+  return asset
+}
 
-const DEPOSIT_ADDRESS = 'TJK8x4mBrV9cLfQz2nHpW3dYsE6uA1oNv'
+function assetSelectLabel(asset) {
+  if (asset === 'USDT') return 'USDT (TRC-20)'
+  return assetLabel(asset)
+}
 
-const MAX_BY_ASSET = {
-  usdt: 6263.64,
-  btc: 0.1312,
-  eth: 2.281,
-  gold: 8.24,
-  sol: 0,
+function formatUsd(n) {
+  if (n == null || Number.isNaN(Number(n))) return '$0.00'
+  return `$${Number(n).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 function QrPatternGold() {
@@ -143,13 +112,60 @@ function Select({ value, onChange, options }) {
 }
 
 export default function Wallet() {
-  const [depositAsset, setDepositAsset] = useState('usdt')
-  const [withdrawAsset, setWithdrawAsset] = useState('usdt')
-  const [withdrawAddress, setWithdrawAddress] = useState('')
-  const [withdrawAmount, setWithdrawAmount] = useState('')
+  const navigate = useNavigate()
+  const [walletData, setWalletData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [selectedAsset, setSelectedAsset] = useState('USDT')
+  const [withdrawForm, setWithdrawForm] = useState({
+    asset: 'USDT',
+    amount: '',
+    destinationAddress: '',
+  })
+  const [withdrawError, setWithdrawError] = useState('')
+  const [withdrawSuccess, setWithdrawSuccess] = useState('')
+  const [withdrawLoading, setWithdrawLoading] = useState(false)
+
+  useEffect(() => {
+    const fetchWallet = async () => {
+      try {
+        const res = await walletAPI.getBalances()
+        setWalletData(res.data.data)
+      } catch (err) {
+        if (err.response?.status === 401) {
+          localStorage.clear()
+          navigate('/login')
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchWallet()
+  }, [navigate])
+
+  const handleWithdraw = async (e) => {
+    e.preventDefault()
+    setWithdrawError('')
+    setWithdrawSuccess('')
+    setWithdrawLoading(true)
+    try {
+      await walletAPI.withdraw({
+        asset: withdrawForm.asset,
+        amount: parseFloat(withdrawForm.amount),
+        destinationAddress: withdrawForm.destinationAddress,
+      })
+      setWithdrawSuccess('Withdrawal submitted successfully')
+      const updated = await walletAPI.getBalances()
+      setWalletData(updated.data.data)
+      setWithdrawForm({ asset: 'USDT', amount: '', destinationAddress: '' })
+    } catch (err) {
+      setWithdrawError(err.response?.data?.message || 'Withdrawal failed')
+    } finally {
+      setWithdrawLoading(false)
+    }
+  }
 
   const networkFee = 1.2
-  const amt = parseFloat(withdrawAmount) || 0
+  const amt = parseFloat(withdrawForm.amount) || 0
   const youReceive = Math.max(0, amt - networkFee)
 
   const scrollTo = (id) => {
@@ -157,8 +173,46 @@ export default function Wallet() {
   }
 
   const setMaxAmount = () => {
-    const m = MAX_BY_ASSET[withdrawAsset] ?? 0
-    setWithdrawAmount(m > 0 ? String(m) : '')
+    const w = walletData?.wallets?.find((x) => x.asset === withdrawForm.asset)
+    if (w?.balance == null) return
+    setWithdrawForm((f) => ({
+      ...f,
+      amount: String(w.balance),
+    }))
+  }
+
+  const totalDisplay = formatUsd(walletData?.totalUSD)
+  const usdtWallet = walletData?.wallets?.find((w) => w.asset === 'USDT')
+  const availableUsd = formatUsd(usdtWallet?.usdValue ?? usdtWallet?.balance)
+
+  const walletOptions =
+    walletData?.wallets?.length > 0
+      ? walletData.wallets.map((w) => ({
+          value: w.asset,
+          label: assetSelectLabel(w.asset),
+        }))
+      : [{ value: 'USDT', label: 'USDT (TRC-20)' }]
+
+  const depositAddress =
+    walletData?.wallets?.find((w) => w.asset === selectedAsset)?.depositAddress ?? ''
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          background: 'var(--navy)',
+          color: 'var(--gold)',
+          fontFamily: 'Cormorant Garamond, serif',
+          fontSize: '1rem',
+        }}
+      >
+        Loading wallet...
+      </div>
+    )
   }
 
   return (
@@ -252,7 +306,7 @@ export default function Wallet() {
                     lineHeight: 1.1,
                   }}
                 >
-                  $48,320.64
+                  {totalDisplay}
                 </div>
                 <div
                   style={{
@@ -266,17 +320,35 @@ export default function Wallet() {
                 >
                   <span>
                     Available{' '}
-                    <strong style={{ color: 'var(--text1)' }}>$6,264.22</strong>
+                    <strong style={{ color: 'var(--text1)' }}>{availableUsd}</strong>
                   </span>
                   <span style={{ color: 'var(--text3)', opacity: 0.5 }}>|</span>
                   <span>
                     In orders{' '}
-                    <strong style={{ color: 'var(--amber)' }}>$3,180</strong>
+                    <strong style={{ color: 'var(--amber)' }}>
+                      {walletData?.inOrdersUSD != null
+                        ? formatUsd(walletData.inOrdersUSD)
+                        : '—'}
+                    </strong>
                   </span>
                   <span style={{ color: 'var(--text3)', opacity: 0.5 }}>|</span>
                   <span>
                     Unrealized PnL{' '}
-                    <strong style={{ color: 'var(--emerald)' }}>+$2,847.40</strong>
+                    <strong
+                      style={{
+                        color:
+                          walletData?.unrealizedPnLUSD != null &&
+                          Number(walletData.unrealizedPnLUSD) < 0
+                            ? 'var(--red)'
+                            : 'var(--emerald)',
+                      }}
+                    >
+                      {walletData?.unrealizedPnLUSD != null
+                        ? `${Number(walletData.unrealizedPnLUSD) >= 0 ? '+' : '-'}${formatUsd(
+                            Math.abs(Number(walletData.unrealizedPnLUSD)),
+                          )}`
+                        : '—'}
+                    </strong>
                   </span>
                 </div>
               </div>
@@ -288,7 +360,25 @@ export default function Wallet() {
                     color: 'var(--emerald)',
                   }}
                 >
-                  +$1,284.20
+                  {walletData?.todayPnLUSD != null ||
+                  walletData?.pnl24h != null ||
+                  walletData?.dayChangeUsd != null
+                    ? `${Number(
+                        walletData.todayPnLUSD ??
+                          walletData.pnl24h ??
+                          walletData.dayChangeUsd,
+                      ) >= 0
+                        ? '+'
+                        : ''}${formatUsd(
+                        Math.abs(
+                          Number(
+                            walletData.todayPnLUSD ??
+                              walletData.pnl24h ??
+                              walletData.dayChangeUsd,
+                          ),
+                        ),
+                      )}`
+                    : '—'}
                 </div>
                 <div
                   style={{
@@ -298,7 +388,11 @@ export default function Wallet() {
                     color: 'var(--text2)',
                   }}
                 >
-                  +2.73% today
+                  {walletData?.todayPnLPct != null ||
+                  walletData?.pnl24hPct != null ||
+                  walletData?.dayChangePct != null
+                    ? `${Number(walletData.todayPnLPct ?? walletData.pnl24hPct ?? walletData.dayChangePct) >= 0 ? '+' : ''}${Number(walletData.todayPnLPct ?? walletData.pnl24hPct ?? walletData.dayChangePct).toFixed(2)}% today`
+                    : '—'}
                 </div>
               </div>
             </div>
@@ -309,115 +403,160 @@ export default function Wallet() {
               <div style={labelUpper}>Asset Holdings</div>
             </div>
             <div style={{ overflowX: 'auto' }}>
-              <table
+              <div
                 style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: '13px',
+                  display: 'grid',
+                  gridTemplateColumns: '2fr 1fr 1fr 1fr 110px',
+                  alignItems: 'center',
+                  padding: '12px 16px',
+                  gap: '8px',
+                  fontWeight: 600,
+                  fontSize: '10px',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  borderBottom: '0.5px solid var(--navy-b2)',
+                  color: 'var(--text3)',
+                  whiteSpace: 'nowrap',
+                  minWidth: '520px',
                 }}
               >
-                <thead>
-                  <tr style={{ textAlign: 'left', color: 'var(--text3)' }}>
-                    {['Asset', 'Balance', 'USD Value', '24h', 'Actions'].map((h) => (
-                      <th
-                        key={h}
-                        style={{
-                          padding: '12px 16px',
-                          fontWeight: 600,
-                          fontSize: '10px',
-                          letterSpacing: '0.08em',
-                          textTransform: 'uppercase',
-                          borderBottom: '0.5px solid var(--navy-b2)',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ASSETS.map((a) => (
-                    <tr
-                      key={a.id}
+                <span>Asset</span>
+                <span style={{ textAlign: 'right' }}>Balance</span>
+                <span style={{ textAlign: 'right' }}>USD Value</span>
+                <span style={{ textAlign: 'right' }}>Status</span>
+                <span style={{ textAlign: 'right' }}>Actions</span>
+              </div>
+              {(walletData?.wallets ?? []).map((wallet) => (
+                <div
+                  key={wallet.asset}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '2fr 1fr 1fr 1fr 110px',
+                    alignItems: 'center',
+                    padding: '10px 16px',
+                    borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div
                       style={{
-                        borderBottom: '0.5px solid var(--navy-b2)',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        background: 'rgba(201,166,70,0.1)',
+                        color: 'var(--gold)',
+                        border: '0.5px solid var(--gold-dim)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.7rem',
+                        fontWeight: '600',
+                        flexShrink: 0,
                       }}
                     >
-                      <td
-                        style={{
-                          padding: '14px 16px',
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                        }}
-                      >
-                        {a.label}
-                      </td>
-                      <td style={{ padding: '14px 16px', color: 'var(--text2)' }}>
-                        {a.balance}
-                      </td>
-                      <td
-                        style={{
-                          padding: '14px 16px',
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                        }}
-                      >
-                        {a.usd}
-                      </td>
-                      <td
-                        style={{
-                          padding: '14px 16px',
-                          fontWeight: 600,
-                          color:
-                            a.up === false
-                              ? 'var(--red)'
-                              : 'var(--emerald)',
-                        }}
-                      >
-                        {a.h24}
-                      </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            onClick={() => scrollTo('wallet-deposit')}
-                            style={{
-                              padding: '6px 12px',
-                              borderRadius: '6px',
-                              border: 'none',
-                              background: 'var(--em-bg)',
-                              color: 'var(--emerald)',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              fontFamily: 'inherit',
-                            }}
-                          >
-                            Deposit
-                          </button>
-                          <Link
-                            to="/trading"
-                            style={{
-                              padding: '6px 12px',
-                              borderRadius: '6px',
-                              border: '0.5px solid var(--navy-b)',
-                              background: 'transparent',
-                              color: 'var(--gold)',
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              textDecoration: 'none',
-                              display: 'inline-block',
-                            }}
-                          >
-                            Trade
-                          </Link>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      {wallet.asset === 'BTC'
+                        ? '₿'
+                        : wallet.asset === 'ETH'
+                          ? 'Ξ'
+                          : wallet.asset === 'GOLD'
+                            ? 'Au'
+                            : '$'}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: '500' }}>
+                        {wallet.asset === 'BTC'
+                          ? 'Bitcoin'
+                          : wallet.asset === 'ETH'
+                            ? 'Ethereum'
+                            : wallet.asset === 'GOLD'
+                              ? 'Digital Gold'
+                              : 'Tether USD'}
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text3)' }}>
+                        {wallet.asset}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'right',
+                      fontFamily: 'DM Mono, monospace',
+                      fontSize: '0.76rem',
+                    }}
+                  >
+                    {Number(wallet.balance).toFixed(4)}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'right',
+                      fontFamily: 'DM Mono, monospace',
+                      fontSize: '0.76rem',
+                    }}
+                  >
+                    $
+                    {wallet.usdValue?.toLocaleString('en-US', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    }) || '0.00'}
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span
+                      style={{
+                        fontSize: '0.6rem',
+                        padding: '2px 7px',
+                        borderRadius: '10px',
+                        fontWeight: '500',
+                        background: 'rgba(29,158,117,0.12)',
+                        color: 'var(--emerald)',
+                        border: '0.5px solid rgba(29,158,117,0.3)',
+                      }}
+                    >
+                      Active
+                    </span>
+                  </div>
+                  <div
+                    style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end', flexWrap: 'wrap' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAsset(wallet.asset)}
+                      style={{
+                        padding: '4px 9px',
+                        borderRadius: '4px',
+                        fontSize: '0.65rem',
+                        cursor: 'pointer',
+                        border: '0.5px solid var(--navy-b)',
+                        background: 'var(--navy-card2)',
+                        color: 'var(--text2)',
+                        fontFamily: 'DM Sans, sans-serif',
+                      }}
+                    >
+                      Deposit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setWithdrawForm((f) => ({
+                          ...f,
+                          asset: wallet.asset,
+                        }))
+                      }
+                      style={{
+                        padding: '4px 9px',
+                        borderRadius: '4px',
+                        fontSize: '0.65rem',
+                        cursor: 'pointer',
+                        border: '0.5px solid var(--navy-b)',
+                        background: 'var(--navy-card2)',
+                        color: 'var(--text2)',
+                        fontFamily: 'DM Sans, sans-serif',
+                      }}
+                    >
+                      Trade
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -442,9 +581,9 @@ export default function Wallet() {
                   Asset
                 </div>
                 <Select
-                  value={depositAsset}
-                  onChange={setDepositAsset}
-                  options={[{ value: 'usdt', label: 'USDT (TRC-20)' }]}
+                  value={selectedAsset}
+                  onChange={setSelectedAsset}
+                  options={walletOptions}
                 />
               </div>
               <div
@@ -478,7 +617,7 @@ export default function Wallet() {
                       wordBreak: 'break-all',
                     }}
                   >
-                    {DEPOSIT_ADDRESS}
+                    {depositAddress || '—'}
                   </div>
                   <div
                     style={{
@@ -499,72 +638,91 @@ export default function Wallet() {
             </div>
 
             <div id="wallet-withdraw" style={{ ...card, padding: '1.25rem' }}>
-              <div style={labelUpper}>Withdraw</div>
-              <div style={{ marginBottom: '12px' }}>
-                <div
-                  style={{
-                    ...labelUpper,
-                    marginBottom: '8px',
-                    fontSize: '9px',
-                  }}
-                >
-                  Asset
-                </div>
-                <Select
-                  value={withdrawAsset}
-                  onChange={setWithdrawAsset}
-                  options={[
-                    { value: 'usdt', label: 'USDT (TRC-20)' },
-                    { value: 'btc', label: 'Bitcoin' },
-                    { value: 'eth', label: 'Ethereum' },
-                    { value: 'gold', label: 'Digital Gold' },
-                    { value: 'sol', label: 'Solana' },
-                  ]}
-                />
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <div
-                  style={{
-                    ...labelUpper,
-                    marginBottom: '8px',
-                    fontSize: '9px',
-                  }}
-                >
-                  Destination address
-                </div>
-                <input
-                  value={withdrawAddress}
-                  onChange={(e) => setWithdrawAddress(e.target.value)}
-                  placeholder="Enter wallet address"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '0.5px solid var(--navy-b2)',
-                    background: 'var(--navy-card2)',
-                    color: 'var(--text1)',
-                    fontFamily: 'inherit',
-                    fontSize: '13px',
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <div
-                  style={{
-                    ...labelUpper,
-                    marginBottom: '8px',
-                    fontSize: '9px',
-                  }}
-                >
-                  Amount
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
-                    placeholder="0.00"
+              <form onSubmit={handleWithdraw}>
+                <div style={labelUpper}>Withdraw</div>
+                {withdrawError ? (
+                  <div
                     style={{
-                      flex: 1,
+                      marginBottom: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      background: 'var(--red-bg)',
+                      border: '0.5px solid var(--red-b)',
+                      fontSize: '12px',
+                      color: 'var(--red)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {withdrawError}
+                  </div>
+                ) : null}
+                {withdrawSuccess ? (
+                  <div
+                    style={{
+                      marginBottom: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      background: 'rgba(29,158,117,0.12)',
+                      border: '0.5px solid rgba(29,158,117,0.35)',
+                      fontSize: '12px',
+                      color: 'var(--emerald)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {withdrawSuccess}
+                  </div>
+                ) : null}
+                <div style={{ marginBottom: '12px' }}>
+                  <div
+                    style={{
+                      ...labelUpper,
+                      marginBottom: '8px',
+                      fontSize: '9px',
+                    }}
+                  >
+                    Asset
+                  </div>
+                  <Select
+                    value={withdrawForm.asset}
+                    onChange={(asset) =>
+                      setWithdrawForm((f) => ({ ...f, asset }))
+                    }
+                    options={
+                      walletData?.wallets?.length > 0
+                        ? walletData.wallets.map((w) => ({
+                            value: w.asset,
+                            label: assetSelectLabel(w.asset),
+                          }))
+                        : [
+                            { value: 'USDT', label: 'USDT (TRC-20)' },
+                            { value: 'BTC', label: 'Bitcoin' },
+                            { value: 'ETH', label: 'Ethereum' },
+                            { value: 'GOLD', label: 'Digital Gold' },
+                          ]
+                    }
+                  />
+                </div>
+                <div style={{ marginBottom: '12px' }}>
+                  <div
+                    style={{
+                      ...labelUpper,
+                      marginBottom: '8px',
+                      fontSize: '9px',
+                    }}
+                  >
+                    Destination address
+                  </div>
+                  <input
+                    value={withdrawForm.destinationAddress}
+                    onChange={(e) =>
+                      setWithdrawForm((f) => ({
+                        ...f,
+                        destinationAddress: e.target.value,
+                      }))
+                    }
+                    placeholder="Enter wallet address"
+                    style={{
+                      width: '100%',
                       padding: '10px 12px',
                       borderRadius: '8px',
                       border: '0.5px solid var(--navy-b2)',
@@ -574,82 +732,117 @@ export default function Wallet() {
                       fontSize: '13px',
                     }}
                   />
-                  <button
-                    type="button"
-                    onClick={setMaxAmount}
+                </div>
+                <div style={{ marginBottom: '12px' }}>
+                  <div
                     style={{
-                      padding: '10px 14px',
-                      borderRadius: '8px',
-                      border: '0.5px solid var(--gold)',
-                      background: 'var(--gold-glow)',
-                      color: 'var(--gold)',
-                      fontWeight: 700,
-                      fontSize: '11px',
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      flexShrink: 0,
+                      ...labelUpper,
+                      marginBottom: '8px',
+                      fontSize: '9px',
                     }}
                   >
-                    MAX
-                  </button>
+                    Amount
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      value={withdrawForm.amount}
+                      onChange={(e) =>
+                        setWithdrawForm((f) => ({
+                          ...f,
+                          amount: e.target.value,
+                        }))
+                      }
+                      placeholder="0.00"
+                      style={{
+                        flex: 1,
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        border: '0.5px solid var(--navy-b2)',
+                        background: 'var(--navy-card2)',
+                        color: 'var(--text1)',
+                        fontFamily: 'inherit',
+                        fontSize: '13px',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={setMaxAmount}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '0.5px solid var(--gold)',
+                        background: 'var(--gold-glow)',
+                        color: 'var(--gold)',
+                        fontWeight: 700,
+                        fontSize: '11px',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        flexShrink: 0,
+                      }}
+                    >
+                      MAX
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div
-                style={{
-                  padding: '12px',
-                  borderRadius: '8px',
-                  background: 'var(--navy-card2)',
-                  border: '0.5px solid var(--navy-b2)',
-                  marginBottom: '12px',
-                }}
-              >
                 <div
                   style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontSize: '12px',
-                    color: 'var(--text2)',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    background: 'var(--navy-card2)',
+                    border: '0.5px solid var(--navy-b2)',
+                    marginBottom: '12px',
                   }}
                 >
-                  <span>Network fee</span>
-                  <span style={{ color: 'var(--text1)' }}>~$1.20</span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '12px',
+                      color: 'var(--text2)',
+                    }}
+                  >
+                    <span>Network fee</span>
+                    <span style={{ color: 'var(--text1)' }}>~$1.20</span>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginTop: '10px',
+                      fontSize: '12px',
+                      color: 'var(--text2)',
+                    }}
+                  >
+                    <span>You receive</span>
+                    <span style={{ color: 'var(--text1)', fontWeight: 600 }}>
+                      $
+                      {youReceive.toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
                 </div>
-                <div
+                <button
+                  type="submit"
+                  disabled={withdrawLoading}
                   style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginTop: '10px',
-                    fontSize: '12px',
-                    color: 'var(--text2)',
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: withdrawLoading ? 'var(--text3)' : 'var(--gold)',
+                    color: 'var(--navy)',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: withdrawLoading ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                    opacity: withdrawLoading ? 0.85 : 1,
                   }}
                 >
-                  <span>You receive</span>
-                  <span style={{ color: 'var(--text1)', fontWeight: 600 }}>
-                    $
-                    {youReceive.toLocaleString('en-US', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  background: 'var(--gold)',
-                  color: 'var(--navy)',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                Confirm Withdrawal
-              </button>
+                  {withdrawLoading ? 'Submitting…' : 'Confirm Withdrawal'}
+                </button>
+              </form>
               <p
                 style={{
                   marginTop: '12px',
@@ -658,8 +851,8 @@ export default function Wallet() {
                   lineHeight: 1.5,
                 }}
               >
-                2FA required. Withdrawals are processed within 10–30 minutes after
-                network confirmation.
+                2FA required. Withdrawals are processed within 10–30 minutes after network
+                confirmation.
               </p>
             </div>
           </div>
