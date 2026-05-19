@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Area,
   AreaChart,
@@ -8,7 +8,6 @@ import {
   YAxis,
 } from 'recharts'
 import Sidebar from '../components/layout/Sidebar.jsx'
-import { pricesAPI } from '../services/api'
 
 const PAIR_LIST_KEYS = [
   'BTC/USDT',
@@ -74,7 +73,10 @@ function buildBook(mid) {
 
 export default function Trading() {
   const [prices, setPrices] = useState({})
-  const [loading, setLoading] = useState(true)
+  const [connected, setConnected] = useState(false)
+  const wsRef = useRef(null)
+  const allowReconnectRef = useRef(true)
+
   const [pair, setPair] = useState('GOLD/USDT')
   const [timeframe, setTimeframe] = useState('1H')
   const [bottomTab, setBottomTab] = useState('open')
@@ -83,25 +85,52 @@ export default function Trading() {
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
 
-  const [liveOk, setLiveOk] = useState(false)
-
   useEffect(() => {
-    const fetchPrices = async () => {
-      try {
-        const res = await pricesAPI.getAll()
-        setPrices(res.data.data ?? {})
-        setLoading(false)
-        setLiveOk(true)
-      } catch (err) {
-        console.error('Price fetch failed:', err)
-        setLoading(false)
-        setLiveOk(false)
+    allowReconnectRef.current = true
+    const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:5001'
+
+    function connect() {
+      const ws = new WebSocket(WS_URL)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        console.log('WebSocket connected')
+        setConnected(true)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'price_update') {
+            setPrices(msg.data)
+          }
+        } catch (err) {
+          console.error('WS parse error:', err)
+        }
+      }
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected - reconnecting in 3s')
+        setConnected(false)
+        if (allowReconnectRef.current) {
+          setTimeout(connect, 3000)
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        ws.close()
       }
     }
 
-    fetchPrices()
-    const interval = setInterval(fetchPrices, 10000)
-    return () => clearInterval(interval)
+    connect()
+
+    return () => {
+      allowReconnectRef.current = false
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
   }, [])
 
   const pairList = PAIR_LIST_KEYS.map((sym) => ({
@@ -361,7 +390,7 @@ export default function Trading() {
                       minHeight: '18px',
                     }}
                   >
-                    {liveOk && !loading ? (
+                    {connected ? (
                       <>
                         <span className="trading-pulse-dot" />
                         <span
@@ -375,7 +404,18 @@ export default function Trading() {
                           LIVE
                         </span>
                       </>
-                    ) : null}
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          letterSpacing: '0.06em',
+                          color: 'var(--text3)',
+                        }}
+                      >
+                        Connecting...
+                      </span>
+                    )}
                   </div>
                   <div
                     style={{
