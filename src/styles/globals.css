@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css');
+
+:root {
+  --gold: #C9A646;
+  --gold-light: #E8C96A;
+  --gold-dim: #8B6F2A;
+  --gold-glow: rgba(201, 166, 70, 0.10);
+  --navy: #0B0F1A;
+  --navy-mid: #141928;
+  --navy-card: #1A2035;
+  --navy-card2: #1E2540;
+  --navy-b: rgba(201, 166, 70, 0.14);
+  --navy-b2: rgba(255, 255, 255, 0.05);
+  --emerald: #1D9E75;
+  --em-bg: rgba(29, 158, 117, 0.12);
+  --red: #E24B4A;
+  --red-bg: rgba(226, 75, 74, 0.12);
+  --blue: #378ADD;
+  --amber: #EF9F27;
+  --purple: #7F77DD;
+  --text1: #F0EAD6;
+  --text2: #8A8FA8;
+  --text3: #4A5070;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--navy);
+  color: var(--text1);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  min-height: 100vh;
+}
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { 
+  background: rgba(201,166,70,.2); 
+  border-radius: 3px; 
+}
+
+/* Landing: infinite horizontal ticker */
+@keyframes landing-ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.landing-ticker-track {
+  display: flex;
+  width: max-content;
+  animation: landing-ticker-scroll 45s linear infinite;
+}
+
+.landing-ticker-track:hover {
+  animation-play-state: paused;
+}
