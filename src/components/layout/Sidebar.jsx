@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useMemo } from 'react'
 
 const MAIN_NAV = [
   {
@@ -100,7 +101,45 @@ function NavSection({ title, items, activePage }) {
   )
 }
 
-export default function Sidebar({ activePage }) {
+export default function Sidebar({ activePage, user: userFromProp }) {
+  const navigate = useNavigate()
+
+  const user = useMemo(() => {
+    try {
+      const fromLs = JSON.parse(localStorage.getItem('user') || '{}')
+      if (
+        userFromProp &&
+        typeof userFromProp === 'object' &&
+        (userFromProp.full_name != null || userFromProp.email != null)
+      ) {
+        return { ...fromLs, ...userFromProp }
+      }
+      return fromLs
+    } catch {
+      return userFromProp && typeof userFromProp === 'object' ? userFromProp : {}
+    }
+  }, [userFromProp])
+
+  const displayName = user?.full_name?.split(' ')[0] || 'User'
+  const initials = useMemo(() => {
+    const parts = (user?.full_name || '').trim().split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase()
+    }
+    if (parts.length === 1 && parts[0].length >= 2) {
+      return parts[0].slice(0, 2).toUpperCase()
+    }
+    if (parts.length === 1) {
+      return (parts[0][0] || 'U').toUpperCase()
+    }
+    return 'U'
+  }, [user?.full_name])
+
+  const handleLogout = () => {
+    localStorage.clear()
+    navigate('/login')
+  }
+
   return (
     <aside
       style={{
@@ -178,7 +217,7 @@ export default function Sidebar({ activePage }) {
             flexShrink: 0,
           }}
         >
-          TB
+          {initials}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
@@ -191,7 +230,7 @@ export default function Sidebar({ activePage }) {
               textOverflow: 'ellipsis',
             }}
           >
-            Thomas B.
+            {displayName}
           </div>
           <div
             style={{
@@ -203,6 +242,32 @@ export default function Sidebar({ activePage }) {
             Verified ✓
           </div>
         </div>
+      </div>
+
+      <div style={{ padding: '0 12px 16px' }}>
+        <button
+          type="button"
+          onClick={handleLogout}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            padding: '10px 12px',
+            borderRadius: '8px',
+            border: '0.5px solid var(--navy-b)',
+            background: 'var(--navy-card2)',
+            color: 'var(--text2)',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          <i className="ti ti-logout" style={{ fontSize: '16px' }} aria-hidden />
+          Log out
+        </button>
       </div>
     </aside>
   )

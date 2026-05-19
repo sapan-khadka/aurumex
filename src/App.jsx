@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Landing from './pages/Landing.jsx'
+import Login from './pages/Login.jsx'
+import Register from './pages/Register.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Wallet from './pages/Wallet.jsx'
 import KYC from './pages/KYC.jsx'
@@ -15,6 +17,16 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route
+          path="/forgot-password"
+          element={
+            <div style={{ color: 'var(--text1)', padding: '2rem', textAlign: 'center' }}>
+              Forgot password — coming soon
+            </div>
+          }
+        />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/wallet" element={<Wallet />} />
         <Route path="/kyc" element={<KYC />} />

@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useMemo } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   PieChart,
   Pie,
@@ -7,86 +8,13 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import Sidebar from '../components/layout/Sidebar.jsx'
+import { walletAPI, ordersAPI, pricesAPI } from '../services/api'
 
-const DISTRIBUTION = [
+const DISTRIBUTION_FALLBACK = [
   { name: 'GOLD', value: 41, fill: 'var(--gold)' },
   { name: 'BTC', value: 28, fill: 'var(--emerald)' },
   { name: 'ETH', value: 18, fill: 'var(--blue)' },
   { name: 'Other', value: 13, fill: 'var(--text3)' },
-]
-
-const HOLDINGS = [
-  {
-    name: 'Digital Gold',
-    amount: '8.24g',
-    usd: '$19,716',
-    change: '+1.84%',
-    changeType: 'up',
-  },
-  {
-    name: 'Bitcoin',
-    amount: '0.1312 BTC',
-    usd: '$13,624',
-    change: '+2.14%',
-    changeType: 'up',
-  },
-  {
-    name: 'Ethereum',
-    amount: '2.281 ETH',
-    usd: '$8,717',
-    change: '+1.76%',
-    changeType: 'up',
-  },
-  {
-    name: 'USDT',
-    amount: '6,263.64',
-    usd: '$6,264',
-    change: 'Stable',
-    changeType: 'stable',
-  },
-]
-
-const TRANSACTIONS = [
-  {
-    icon: 'ti-coin',
-    iconBg: 'var(--gold-glow)',
-    iconColor: 'var(--gold)',
-    title: 'Digital Gold Purchase',
-    date: 'May 16, 2026',
-    amount: '+2.40 g',
-    usd: '$5,748.00',
-    usdTone: 'var(--text1)',
-  },
-  {
-    icon: 'ti-currency-bitcoin',
-    iconBg: 'var(--em-bg)',
-    iconColor: 'var(--emerald)',
-    title: 'Buy Bitcoin',
-    date: 'May 15, 2026',
-    amount: '+0.0312 BTC',
-    usd: '$3,246.00',
-    usdTone: 'var(--emerald)',
-  },
-  {
-    icon: 'ti-arrow-bar-down',
-    iconBg: 'var(--em-bg)',
-    iconColor: 'var(--emerald)',
-    title: 'USDT Deposit',
-    date: 'May 14, 2026',
-    amount: '+$5,000.00',
-    usd: '$5,000.00',
-    usdTone: 'var(--text1)',
-  },
-  {
-    icon: 'ti-chart-line',
-    iconBg: 'var(--red-bg)',
-    iconColor: 'var(--red)',
-    title: 'Spot Fee Rebate',
-    date: 'May 12, 2026',
-    amount: '+$42.80',
-    usd: '$42.80',
-    usdTone: 'var(--gold)',
-  },
 ]
 
 const card = {
@@ -102,6 +30,14 @@ const labelUpper = {
   textTransform: 'uppercase',
   color: 'var(--text3)',
   marginBottom: '12px',
+}
+
+const ASSET_FILL = {
+  BTC: 'var(--emerald)',
+  ETH: 'var(--blue)',
+  GOLD: 'var(--gold)',
+  USDT: 'var(--text3)',
+  DEFAULT: 'var(--purple)',
 }
 
 function ActionBtn({ bg, color, icon, label }) {
@@ -131,10 +67,165 @@ function ActionBtn({ bg, color, icon, label }) {
   )
 }
 
+function buildDistribution(wallets) {
+  if (!wallets?.length) return DISTRIBUTION_FALLBACK
+  const total = wallets.reduce((s, w) => s + (Number(w.usdValue) || 0), 0)
+  if (!Number.isFinite(total) || total <= 0) return DISTRIBUTION_FALLBACK
+  const items = wallets
+    .map((w) => {
+      const v = ((Number(w.usdValue) || 0) / total) * 100
+      return {
+        name: w.asset,
+        value: Math.max(0, Math.round(v * 10) / 10),
+        fill: ASSET_FILL[w.asset] || ASSET_FILL.DEFAULT,
+      }
+    })
+    .filter((d) => d.value > 0)
+  if (!items.length) return DISTRIBUTION_FALLBACK
+  const sum = items.reduce((s, i) => s + i.value, 0)
+  if (sum < 99.5 && items.length) {
+    items[items.length - 1] = {
+      ...items[items.length - 1],
+      value: Math.round((items[items.length - 1].value + (100 - sum)) * 10) / 10,
+    }
+  }
+  return items
+}
+
 export default function Dashboard() {
+  const navigate = useNavigate()
+  const [walletData, setWalletData] = useState(null)
+  const [orders, setOrders] = useState([])
+  const [prices, setPrices] = useState({})
+  const [loading, setLoading] = useState(true)
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        const [walletRes, ordersRes, pricesRes] = await Promise.all([
+          walletAPI.getBalances(),
+          ordersAPI.getHistory(),
+          pricesAPI.getAll(),
+        ])
+        setWalletData(walletRes.data.data)
+        const rawOrders = ordersRes.data.data
+        const orderList = Array.isArray(rawOrders?.orders)
+          ? rawOrders.orders
+          : Array.isArray(rawOrders)
+            ? rawOrders
+            : []
+        setOrders(orderList)
+        setPrices(pricesRes.data.data || {})
+      } catch (err) {
+        if (err.response?.status === 401) {
+          localStorage.clear()
+          navigate('/login')
+        }
+        console.error('Dashboard fetch error:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchAll()
+  }, [navigate])
+
+  const distributionData = useMemo(
+    () => buildDistribution(walletData?.wallets),
+    [walletData],
+  )
+
+  const openOrdersCount = useMemo(() => {
+    return orders.filter((o) => {
+      const s = String(o.status || '').toLowerCase()
+      return s === 'open' || s === 'pending' || s === 'new'
+    }).length
+  }, [orders])
+
+  const totalFeesOrderSample = useMemo(() => {
+    return orders.reduce((s, o) => s + (Number(o.fee) || 0), 0)
+  }, [orders])
+
+  const todayPnL =
+    walletData?.todayPnLUSD ??
+    walletData?.pnl24h ??
+    walletData?.dayChangeUsd ??
+    null
+  const todayPnLPct =
+    walletData?.todayPnLPct ?? walletData?.pnl24hPct ?? walletData?.dayChangePct ?? null
+
+  const statRows = [
+    {
+      label: 'Today P&L',
+      value:
+        todayPnL != null && Number.isFinite(Number(todayPnL))
+          ? `${Number(todayPnL) >= 0 ? '+' : '-'}$${Math.abs(Number(todayPnL)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : '—',
+      valueColor:
+        todayPnL != null && Number(todayPnL) < 0 ? 'var(--red)' : 'var(--emerald)',
+      serif: false,
+    },
+    {
+      label: 'Open Orders',
+      value: String(openOrdersCount),
+      valueColor: 'var(--text1)',
+      serif: true,
+    },
+    {
+      label: '30-Day Return',
+      value:
+        walletData?.return30dPct != null
+          ? `${Number(walletData.return30dPct) >= 0 ? '+' : ''}${Number(walletData.return30dPct).toFixed(1)}%`
+          : '—',
+      valueColor: 'var(--emerald)',
+      serif: false,
+    },
+    {
+      label: 'Fee Saved',
+      value:
+        walletData?.feeSavedUSD != null
+          ? `$${Number(walletData.feeSavedUSD).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : totalFeesOrderSample > 0
+            ? `$${totalFeesOrderSample.toFixed(2)}`
+            : '—',
+      valueColor: 'var(--gold)',
+      serif: false,
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          background: 'var(--navy)',
+          color: 'var(--gold)',
+          fontSize: '1rem',
+          fontFamily: "'Cormorant Garamond', serif",
+        }}
+      >
+        Loading your portfolio...
+      </div>
+    )
+  }
+
+  const totalDisplay = `$${(walletData?.totalUSD != null ? Number(walletData.totalUSD) : 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+
+  const showPnLBadge =
+    todayPnL != null &&
+    Number.isFinite(Number(todayPnL)) &&
+    todayPnLPct != null &&
+    Number.isFinite(Number(todayPnLPct))
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <Sidebar activePage="dashboard" />
+      <Sidebar activePage="dashboard" user={user} />
       <div
         style={{
           flex: 1,
@@ -226,22 +317,30 @@ export default function Dashboard() {
                   letterSpacing: '0.02em',
                 }}
               >
-                $48,320.64
+                {totalDisplay}
               </div>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  marginTop: '12px',
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  background: 'var(--em-bg)',
-                  color: 'var(--emerald)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                }}
-              >
-                +$1,284.20 today +2.73%
-              </div>
+              {showPnLBadge ? (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    marginTop: '12px',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    background: 'var(--em-bg)',
+                    color: 'var(--emerald)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {Number(todayPnL) >= 0 ? '+' : ''}$
+                  {Math.abs(Number(todayPnL)).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  today {Number(todayPnLPct) >= 0 ? '+' : ''}
+                  {Number(todayPnLPct).toFixed(2)}%
+                </div>
+              ) : null}
               <div
                 style={{
                   display: 'flex',
@@ -283,7 +382,7 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                       <Pie
-                        data={DISTRIBUTION}
+                        data={distributionData}
                         dataKey="value"
                         nameKey="name"
                         cx="42%"
@@ -294,7 +393,7 @@ export default function Dashboard() {
                         stroke="var(--navy-card)"
                         strokeWidth={1}
                       >
-                        {DISTRIBUTION.map((entry) => (
+                        {distributionData.map((entry) => (
                           <Cell key={entry.name} fill={entry.fill} />
                         ))}
                       </Pie>
@@ -333,32 +432,7 @@ export default function Dashboard() {
               marginTop: '12px',
             }}
           >
-            {[
-              {
-                label: 'Today P&L',
-                value: '+$1,284.20',
-                valueColor: 'var(--emerald)',
-                serif: false,
-              },
-              {
-                label: 'Open Orders',
-                value: '3',
-                valueColor: 'var(--text1)',
-                serif: true,
-              },
-              {
-                label: '30-Day Return',
-                value: '+14.8%',
-                valueColor: 'var(--emerald)',
-                serif: false,
-              },
-              {
-                label: 'Fee Saved',
-                value: '$42.80',
-                valueColor: 'var(--gold)',
-                serif: false,
-              },
-            ].map((stat) => (
+            {statRows.map((stat) => (
               <div key={stat.label} style={{ ...card, padding: '16px 14px' }}>
                 <div
                   style={{
@@ -397,141 +471,196 @@ export default function Dashboard() {
             <div style={{ ...card, padding: '1.25rem' }}>
               <div style={labelUpper}>Holdings</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                {HOLDINGS.map((h, i) => (
+                {walletData?.wallets?.length ? (
+                  walletData.wallets.map((wallet) => (
+                    <div
+                      key={wallet.asset}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '11px 0',
+                        borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '33px',
+                            height: '33px',
+                            borderRadius: '50%',
+                            background: 'rgba(201,166,70,0.1)',
+                            color: 'var(--gold)',
+                            border: '0.5px solid var(--gold-dim)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '0.7rem',
+                            fontWeight: '600',
+                          }}
+                        >
+                          {wallet.asset === 'BTC'
+                            ? '₿'
+                            : wallet.asset === 'ETH'
+                              ? 'Ξ'
+                              : wallet.asset === 'GOLD'
+                                ? 'Au'
+                                : '$'}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.82rem', fontWeight: '500' }}>
+                            {wallet.asset === 'BTC'
+                              ? 'Bitcoin'
+                              : wallet.asset === 'ETH'
+                                ? 'Ethereum'
+                                : wallet.asset === 'GOLD'
+                                  ? 'Digital Gold'
+                                  : 'Tether USD'}
+                          </div>
+                          <div
+                            style={{ fontSize: '0.67rem', color: 'var(--text3)' }}
+                          >
+                            {Number(wallet.balance).toFixed(4)} {wallet.asset}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div
+                          style={{
+                            fontFamily: 'DM Mono, monospace',
+                            fontSize: '0.78rem',
+                          }}
+                        >
+                          $
+                          {wallet.usdValue != null
+                            ? Number(wallet.usdValue).toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })
+                            : '0.00'}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
                   <div
-                    key={h.name}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '12px',
-                      padding: '14px 0',
-                      borderTop:
-                        i === 0 ? 'none' : '0.5px solid var(--navy-b2)',
+                      padding: '16px 0',
+                      color: 'var(--text3)',
+                      fontSize: '13px',
                     }}
                   >
-                    <div>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                          fontSize: '13px',
-                        }}
-                      >
-                        {h.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          color: 'var(--text3)',
-                          marginTop: '2px',
-                        }}
-                      >
-                        {h.amount}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                          fontSize: '13px',
-                        }}
-                      >
-                        {h.usd}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          marginTop: '2px',
-                          fontWeight: 500,
-                          color:
-                            h.changeType === 'stable'
-                              ? 'var(--text2)'
-                              : 'var(--emerald)',
-                        }}
-                      >
-                        {h.change}
-                      </div>
-                    </div>
+                    No holdings yet
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
             <div style={{ ...card, padding: '1.25rem' }}>
               <div style={labelUpper}>Recent Transactions</div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {TRANSACTIONS.map((tx, i) => (
-                  <div
-                    key={`${tx.title}-${tx.date}`}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      padding: '12px 0',
-                      borderTop:
-                        i === 0 ? 'none' : '0.5px solid var(--navy-b2)',
-                    }}
-                  >
+                {orders.slice(0, 4).length ? (
+                  orders.slice(0, 4).map((order) => (
                     <div
+                      key={order.id}
                       style={{
-                        width: '38px',
-                        height: '38px',
-                        borderRadius: '10px',
-                        background: tx.iconBg,
-                        color: tx.iconColor,
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
+                        justifyContent: 'space-between',
+                        padding: '9px 0',
+                        borderBottom: '0.5px solid rgba(255,255,255,0.04)',
                       }}
                     >
-                      <i className={`ti ${tx.icon}`} style={{ fontSize: '18px' }} />
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '31px',
+                            height: '31px',
+                            borderRadius: '7px',
+                            background:
+                              order.side === 'buy'
+                                ? 'rgba(29,158,117,0.12)'
+                                : 'rgba(226,75,74,0.12)',
+                            color:
+                              order.side === 'buy'
+                                ? 'var(--emerald)'
+                                : 'var(--red)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '14px',
+                          }}
+                        >
+                          {order.side === 'buy' ? '↓' : '↑'}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: '500' }}>
+                            {order.side === 'buy' ? 'Bought' : 'Sold'}{' '}
+                            {order.pair?.split('/')[0]}
+                          </div>
+                          <div
+                            style={{ fontSize: '0.64rem', color: 'var(--text3)' }}
+                          >
+                            {order.createdAt
+                              ? new Date(order.createdAt).toLocaleDateString(
+                                  'en-US',
+                                  {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  },
+                                )
+                              : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div
+                          style={{
+                            fontFamily: 'DM Mono, monospace',
+                            fontSize: '0.74rem',
+                            color:
+                              order.side === 'buy'
+                                ? 'var(--emerald)'
+                                : 'var(--red)',
+                          }}
+                        >
+                          {order.side === 'buy' ? '+' : '-'}
+                          {Number(order.amount).toFixed(4)}{' '}
+                          {order.pair?.split('/')[0]}
+                        </div>
+                        <div
+                          style={{ fontSize: '0.64rem', color: 'var(--text3)' }}
+                        >
+                          Fee: ${Number(order.fee || 0).toFixed(2)}
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                          fontSize: '13px',
-                        }}
-                      >
-                        {tx.title}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          color: 'var(--text3)',
-                          marginTop: '2px',
-                        }}
-                      >
-                        {tx.date}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          fontWeight: 600,
-                          color: 'var(--text1)',
-                        }}
-                      >
-                        {tx.amount}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          color: tx.usdTone,
-                          marginTop: '2px',
-                          fontWeight: 500,
-                        }}
-                      >
-                        {tx.usd}
-                      </div>
-                    </div>
+                  ))
+                ) : (
+                  <div
+                    style={{
+                      padding: '16px 0',
+                      color: 'var(--text3)',
+                      fontSize: '13px',
+                    }}
+                  >
+                    No recent orders
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>

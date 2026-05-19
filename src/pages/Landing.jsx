@@ -153,7 +153,7 @@ export default function Landing() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Link
-            to="/dashboard"
+            to="/login"
             style={{
               padding: '8px 18px',
               borderRadius: '8px',
@@ -167,7 +167,7 @@ export default function Landing() {
             Log in
           </Link>
           <Link
-            to="/dashboard"
+            to="/register"
             style={{
               padding: '8px 18px',
               borderRadius: '8px',
@@ -253,7 +253,7 @@ export default function Landing() {
             }}
           >
             <Link
-              to="/trading"
+              to="/register"
               style={{
                 padding: '12px 26px',
                 borderRadius: '8px',
