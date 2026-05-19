@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Area,
   AreaChart,
@@ -64,8 +64,6 @@ function buildBook(mid) {
 export default function Trading() {
   const [prices, setPrices] = useState({})
   const [connected, setConnected] = useState(false)
-  const wsRef = useRef(null)
-  const allowReconnectRef = useRef(true)
 
   const [pair, setPair] = useState('GOLD/USDT')
   const [timeframe, setTimeframe] = useState('1H')
@@ -76,66 +74,21 @@ export default function Trading() {
   const [amount, setAmount] = useState('')
 
   useEffect(() => {
-    allowReconnectRef.current = true
-    const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:5001'
-
-    function connect() {
-      const ws = new WebSocket(WS_URL)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        console.log('WebSocket connected')
+    const fetchPrices = async () => {
+      try {
+        const res = await pricesAPI.getAll()
+        setPrices(res.data.data)
         setConnected(true)
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          if (msg.type === 'price_update') {
-            setPrices(msg.data)
-          }
-        } catch (err) {
-          console.error('WS parse error:', err)
-        }
-      }
-
-      ws.onclose = () => {
-        console.log('WebSocket disconnected - reconnecting in 3s')
+      } catch (err) {
+        console.error('Price fetch error:', err)
         setConnected(false)
-        if (allowReconnectRef.current) {
-          setTimeout(connect, 3000)
-        }
-      }
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        ws.close()
       }
     }
 
-    connect()
-
-    return () => {
-      allowReconnectRef.current = false
-      if (wsRef.current) {
-        wsRef.current.close()
-      }
-    }
+    fetchPrices()
+    const interval = setInterval(fetchPrices, 5000)
+    return () => clearInterval(interval)
   }, [])
-
-  useEffect(() => {
-    const fallbackTimer = setTimeout(async () => {
-      if (!connected && Object.keys(prices).length === 0) {
-        try {
-          const res = await pricesAPI.getAll()
-          setPrices(res.data.data)
-        } catch (err) {
-          console.error('Fallback price fetch failed:', err)
-        }
-      }
-    }, 5000)
-    return () => clearTimeout(fallbackTimer)
-  }, [connected, prices])
 
   const pairList = [
     'BTC/USDT',
@@ -146,19 +99,19 @@ export default function Trading() {
     'BNB/USDT',
     'XAG/USDT',
     'DOGE/USDT',
-  ].map((sym) => ({
-    sym,
-    price: prices[sym]?.price
-      ? `$${Number(prices[sym].price).toLocaleString('en-US', {
+  ].map((pair) => ({
+    sym: pair,
+    price: prices[pair]?.price
+      ? `$${Number(prices[pair].price).toLocaleString('en-US', {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
       : '...',
     chg:
-      prices[sym]?.change24h !== undefined
-        ? `${prices[sym].change24h >= 0 ? '+' : ''}${prices[sym].change24h.toFixed(2)}%`
+      prices[pair]?.change24h !== undefined
+        ? `${Number(prices[pair].change24h) >= 0 ? '+' : ''}${Number(prices[pair].change24h).toFixed(2)}%`
         : '...',
-    up: (prices[sym]?.change24h || 0) >= 0,
+    up: (prices[pair]?.change24h || 0) >= 0,
   }))
 
   const selPriceNum = Number(prices[pair]?.price)
@@ -353,15 +306,22 @@ export default function Trading() {
                       color: active ? 'var(--gold-light)' : 'var(--text3)',
                     }}
                   >
-                    {item.price}
+                    {prices[item.sym]?.price
+                      ? `$${Number(prices[item.sym].price).toLocaleString()}`
+                      : '...'}
                     <span
                       style={{
                         marginLeft: '6px',
                         fontWeight: 600,
-                        color: item.up ? 'var(--emerald)' : 'var(--red)',
+                        color:
+                          (Number(prices[item.sym]?.change24h) || 0) >= 0
+                            ? 'var(--emerald)'
+                            : 'var(--red)',
                       }}
                     >
-                      {item.chg}
+                      {prices[item.sym]?.change24h !== undefined
+                        ? `${Number(prices[item.sym].change24h) >= 0 ? '+' : ''}${Number(prices[item.sym].change24h).toFixed(2)}%`
+                        : ''}
                     </span>
                   </div>
                 </button>
@@ -420,7 +380,7 @@ export default function Trading() {
                             height: 6,
                             borderRadius: '50%',
                             background: 'var(--emerald)',
-                            animation: 'pulsedot 1.5s infinite',
+                            animation: 'pulsedot 1.5s ease infinite',
                             display: 'inline-block',
                           }}
                         />
