@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useMemo } from 'react'
+import { userIsAdmin } from '../../utils/adminAccess.js'
 
 const MAIN_NAV = [
   {
@@ -190,6 +191,36 @@ export default function Sidebar({ activePage, user: userFromProp }) {
       >
         <NavSection title="Main" items={MAIN_NAV} activePage={activePage} />
         <NavSection title="Account" items={ACCOUNT_NAV} activePage={activePage} />
+        {userIsAdmin(user) ? (
+          <>
+            <div style={{ ...sectionLabelStyle, marginTop: 20 }}>Administration</div>
+            <Link
+              to="/admin"
+              style={{
+                ...linkBase,
+                marginBottom: '4px',
+                borderLeft:
+                  activePage === 'admin'
+                    ? '2px solid var(--gold)'
+                    : '2px solid transparent',
+                color: 'var(--gold)',
+                background:
+                  activePage === 'admin' ? 'var(--gold-glow)' : 'transparent',
+                opacity: activePage === 'admin' ? 1 : 0.88,
+              }}
+            >
+              <i
+                className="ti ti-shield-check"
+                style={{
+                  fontSize: '18px',
+                  opacity: activePage === 'admin' ? 1 : 0.85,
+                }}
+                aria-hidden
+              />
+              <span>Admin</span>
+            </Link>
+          </>
+        ) : null}
       </nav>
 
       <div

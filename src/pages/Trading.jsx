@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Area,
   AreaChart,
@@ -8,7 +9,7 @@ import {
   YAxis,
 } from 'recharts'
 import Sidebar from '../components/layout/Sidebar.jsx'
-import { pricesAPI } from '../services/api'
+import { pricesAPI, ordersAPI, walletAPI } from '../services/api'
 
 const MID_PRICE = {
   'GOLD/USDT': 2341.8,
@@ -61,7 +62,17 @@ function buildBook(mid) {
   return { asks, bids }
 }
 
+function normalizeOrdersPayload(data) {
+  if (data == null) return []
+  if (Array.isArray(data.orders)) return data.orders
+  if (Array.isArray(data)) return data
+  return []
+}
+
 export default function Trading() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
   const [prices, setPrices] = useState({})
   const [connected, setConnected] = useState(false)
 
@@ -72,6 +83,22 @@ export default function Trading() {
   const [orderType, setOrderType] = useState('market')
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
+
+  const [walletBalance, setWalletBalance] = useState({ USDT: 0 })
+  const [baseBalance, setBaseBalance] = useState(0)
+  const [orderError, setOrderError] = useState('')
+  const [orderSuccess, setOrderSuccess] = useState('')
+  const [orderLoading, setOrderLoading] = useState(false)
+  const [openOrders, setOpenOrders] = useState([])
+  const [orderHistory, setOrderHistory] = useState([])
+
+  useEffect(() => {
+    const p = location.state?.pair
+    if (typeof p === 'string' && p.includes('/')) {
+      setPair(p)
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location.pathname, location.state?.pair, navigate])
 
   useEffect(() => {
     const fetchPrices = async () => {
@@ -90,6 +117,35 @@ export default function Trading() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [walletRes, openRes, historyRes] = await Promise.all([
+          walletAPI.getBalances(),
+          ordersAPI.getOpen(),
+          ordersAPI.getHistory(),
+        ])
+
+        const wd = walletRes.data.data ?? {}
+        const wallets = wd.wallets ?? []
+        const balances = { USDT: 0 }
+        wallets.forEach((w) => {
+          balances[w.asset] = Number(w.balance)
+        })
+        setWalletBalance(balances)
+
+        const [b0] = pair.split('/')
+        setBaseBalance(Number(balances[b0]) || 0)
+
+        setOpenOrders(normalizeOrdersPayload(openRes.data.data))
+        setOrderHistory(normalizeOrdersPayload(historyRes.data.data))
+      } catch (err) {
+        console.error('Fetch error:', err)
+      }
+    }
+    fetchData()
+  }, [pair])
+
   const pairList = [
     'BTC/USDT',
     'ETH/USDT',
@@ -99,19 +155,19 @@ export default function Trading() {
     'BNB/USDT',
     'XAG/USDT',
     'DOGE/USDT',
-  ].map((pair) => ({
-    sym: pair,
-    price: prices[pair]?.price
-      ? `$${Number(prices[pair].price).toLocaleString('en-US', {
+  ].map((sym) => ({
+    sym,
+    price: prices[sym]?.price
+      ? `$${Number(prices[sym].price).toLocaleString('en-US', {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })}`
       : '...',
     chg:
-      prices[pair]?.change24h !== undefined
-        ? `${Number(prices[pair].change24h) >= 0 ? '+' : ''}${Number(prices[pair].change24h).toFixed(2)}%`
+      prices[sym]?.change24h !== undefined
+        ? `${Number(prices[sym].change24h) >= 0 ? '+' : ''}${Number(prices[sym].change24h).toFixed(2)}%`
         : '...',
-    up: (prices[pair]?.change24h || 0) >= 0,
+    up: (prices[sym]?.change24h || 0) >= 0,
   }))
 
   const selPriceNum = Number(prices[pair]?.price)
@@ -136,11 +192,107 @@ export default function Trading() {
   const total = amtNum * effectivePrice
   const fee = total * 0.001
 
-  const available = 12400
+  const baseAsset = pair.split('/')[0]
+  const quoteAsset = pair.split('/')[1] || 'USDT'
+  const availableBalance =
+    side === 'buy'
+      ? walletBalance[quoteAsset] || 0
+      : walletBalance[baseAsset] || 0
 
-  const applyPct = (p) => {
-    const maxBase = available / effectivePrice
-    setAmount((maxBase * p).toFixed(isGold ? 4 : 6))
+  const handlePctClick = (pct) => {
+    const max = availableBalance
+    const currentPrice = Number(prices[pair]?.price) || 0
+    if (max <= 0) return
+    if (side === 'buy') {
+      if (!currentPrice) return
+      setAmount(((max * pct) / currentPrice).toFixed(6))
+    } else {
+      setAmount((max * pct).toFixed(6))
+    }
+  }
+
+  const handlePlaceOrder = async () => {
+    setOrderError('')
+    setOrderSuccess('')
+
+    const amountNum = parseFloat(amount)
+    if (!amountNum || amountNum <= 0) {
+      setOrderError('Please enter a valid amount')
+      return
+    }
+
+    if (orderType !== 'market' && (!price || parseFloat(price) <= 0)) {
+      setOrderError('Please enter a valid price')
+      return
+    }
+
+    const currentPrice = Number(prices[pair]?.price) || 0
+
+    const cost =
+      side === 'buy'
+        ? amountNum * (parseFloat(price) || currentPrice || 0)
+        : amountNum
+
+    if (side === 'buy' && orderType === 'market' && !currentPrice) {
+      setOrderError('No market price available for this pair')
+      return
+    }
+
+    if (cost > availableBalance) {
+      setOrderError(
+        `Insufficient ${side === 'buy' ? quoteAsset : baseAsset} balance`,
+      )
+      return
+    }
+
+    setOrderLoading(true)
+
+    try {
+      const orderData = {
+        pair,
+        side,
+        type: orderType,
+        amount: amountNum,
+      }
+
+      if (orderType !== 'market') {
+        orderData.price = parseFloat(price)
+      }
+
+      const res = await ordersAPI.create(orderData)
+      const created = res?.data?.data?.order ?? res?.data?.data
+      const st = created?.status
+
+      setOrderSuccess(
+        `Order ${st === 'filled' ? 'executed' : 'placed'} successfully!`,
+      )
+      setAmount('')
+      setPrice('')
+
+      const [walletRes, openRes, historyRes] = await Promise.all([
+        walletAPI.getBalances(),
+        ordersAPI.getOpen(),
+        ordersAPI.getHistory(),
+      ])
+
+      const wd = walletRes.data.data ?? {}
+      const wallets = wd.wallets ?? []
+      const balances = { USDT: 0 }
+      wallets.forEach((w) => {
+        balances[w.asset] = Number(w.balance)
+      })
+      setWalletBalance(balances)
+      const [b0] = pair.split('/')
+      setBaseBalance(Number(balances[b0]) || 0)
+      setOpenOrders(normalizeOrdersPayload(openRes.data.data))
+      setOrderHistory(normalizeOrdersPayload(historyRes.data.data))
+
+      setTimeout(() => setOrderSuccess(''), 3000)
+    } catch (err) {
+      setOrderError(err.response?.data?.message || 'Order placement failed')
+    } finally {
+      setOrderLoading(false)
+    }
   }
 
   const fmtPrice = (p) =>
@@ -612,59 +764,286 @@ export default function Trading() {
                   </button>
                 ))}
               </div>
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: '12px',
-                }}
-              >
-                <thead>
-                  <tr style={{ color: 'var(--text3)', textAlign: 'left' }}>
-                    {['Time', 'Pair', 'Side', 'Price', 'Amount', 'Filled'].map(
-                      (h) => (
-                        <th
-                          key={h}
+              <div style={{ padding: '0 12px 12px', overflowX: 'auto' }}>
+                {bottomTab === 'open' &&
+                  (openOrders.length === 0 ? (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        padding: '30px',
+                        color: 'var(--text3)',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      No open orders
+                    </div>
+                  ) : (
+                    openOrders.map((order) => {
+                      const filledAmt =
+                        Number(order.filledAmount ?? order.filled ?? 0) || 0
+                      const amt = Number(order.amount) || 0
+                      const pct = amt ? Math.round((filledAmt / amt) * 100) : 0
+                      const priceNum = Number(order.price)
+                      const priceLbl =
+                        order.type === 'market' ||
+                        !Number.isFinite(priceNum) ||
+                        priceNum <= 0
+                          ? 'Market'
+                          : `$${priceNum.toLocaleString('en-US')}`
+                      return (
+                        <div
+                          key={order.id}
                           style={{
-                            padding: '8px 12px',
-                            fontSize: '10px',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.06em',
+                            display: 'grid',
+                            gridTemplateColumns:
+                              '80px 100px 60px 110px 110px 70px 70px',
+                            padding: '10px 0',
+                            alignItems: 'center',
+                            fontSize: '0.74rem',
+                            borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                            minWidth: '640px',
                           }}
                         >
-                          {h}
-                        </th>
-                      ),
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ['12:04', pair, 'Buy', fmtPrice(mid * 0.999), `12.4 ${unit}`, '40%'],
-                    ['11:58', pair, 'Sell', fmtPrice(mid * 1.001), `4.02 ${unit}`, '100%'],
-                    ['11:41', pair, 'Buy', fmtPrice(mid * 0.998), `1.20 ${unit}`, '100%'],
-                  ].map((row, ri) => (
-                    <tr key={ri} style={{ borderTop: '0.5px solid var(--navy-b2)' }}>
-                      {row.map((cell, ci) => (
-                        <td
-                          key={ci}
-                          style={{
-                            padding: '10px 12px',
-                            color:
-                              ci === 2
-                                ? cell === 'Buy'
+                          <span style={{ color: 'var(--text3)' }}>
+                            {order.createdAt
+                              ? new Date(order.createdAt).toLocaleTimeString(
+                                  'en-US',
+                                  { hour: '2-digit', minute: '2-digit' },
+                                )
+                              : '—'}
+                          </span>
+                          <span>{order.pair}</span>
+                          <span
+                            style={{
+                              color:
+                                order.side === 'buy'
                                   ? 'var(--emerald)'
-                                  : 'var(--red)'
-                                : 'var(--text1)',
+                                  : 'var(--red)',
+                              textTransform: 'capitalize',
+                            }}
+                          >
+                            {order.side}
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: "'DM Mono', monospace",
+                            }}
+                          >
+                            {priceLbl}
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: "'DM Mono', monospace",
+                            }}
+                          >
+                            {Number(order.amount).toFixed(4)}
+                          </span>
+                          <span>{pct}%</span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await ordersAPI.cancel(order.id)
+                                const res = await ordersAPI.getOpen()
+                                setOpenOrders(
+                                  normalizeOrdersPayload(res.data.data),
+                                )
+                              } catch (cancelErr) {
+                                console.error('Cancel error:', cancelErr)
+                              }
+                            }}
+                            style={{
+                              padding: '3px 8px',
+                              background: 'rgba(226,75,74,0.12)',
+                              border: '0.5px solid rgba(226,75,74,0.3)',
+                              color: 'var(--red)',
+                              borderRadius: '4px',
+                              fontSize: '0.65rem',
+                              cursor: 'pointer',
+                              fontFamily: 'inherit',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    })
+                  ))}
+                {bottomTab === 'orders' &&
+                  (orderHistory.length === 0 ? (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        padding: '30px',
+                        color: 'var(--text3)',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      No order history
+                    </div>
+                  ) : (
+                    orderHistory.map((order) => (
+                      <div
+                        key={order.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns:
+                            '75px 1fr 50px 60px 100px 1fr 72px minmax(80px,1fr)',
+                          padding: '10px 0',
+                          alignItems: 'center',
+                          fontSize: '0.74rem',
+                          borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                          gap: '6px',
+                          minWidth: '720px',
+                        }}
+                      >
+                        <span style={{ color: 'var(--text3)' }}>
+                          {order.createdAt
+                            ? new Date(order.createdAt).toLocaleTimeString(
+                                'en-US',
+                                { hour: '2-digit', minute: '2-digit' },
+                              )
+                            : '—'}
+                        </span>
+                        <span>{order.pair}</span>
+                        <span
+                          style={{
+                            color:
+                              order.side === 'buy'
+                                ? 'var(--emerald)'
+                                : 'var(--red)',
+                            textTransform: 'capitalize',
                           }}
                         >
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
+                          {order.side}
+                        </span>
+                        <span style={{ color: 'var(--text3)' }}>
+                          {(order.type || '—').toString()}
+                        </span>
+                        <span style={{ fontFamily: "'DM Mono', monospace" }}>
+                          {(() => {
+                            const p = Number(order.price)
+                            return Number.isFinite(p) && p > 0
+                              ? `$${p.toLocaleString('en-US')}`
+                              : '—'
+                          })()}
+                        </span>
+                        <span style={{ fontFamily: "'DM Mono', monospace" }}>
+                          {Number(order.amount).toFixed(4)}
+                        </span>
+                        <span style={{ textTransform: 'capitalize' }}>
+                          {order.status || '—'}
+                        </span>
+                        <span style={{ color: 'var(--text3)', fontSize: '0.68rem' }}>
+                          {order.createdAt
+                            ? new Date(order.createdAt).toLocaleDateString(
+                                'en-US',
+                                { month: 'short', day: 'numeric' },
+                              )
+                            : '—'}
+                        </span>
+                      </div>
+                    ))
                   ))}
-                </tbody>
-              </table>
+                {bottomTab === 'trades' &&
+                  (() => {
+                    const trades = orderHistory.filter((o) => {
+                      const s = String(o.status || '').toLowerCase()
+                      return (
+                        s === 'filled' ||
+                        s === 'partially_filled' ||
+                        s === 'partially filled'
+                      )
+                    })
+                    return trades.length === 0 ? (
+                      <div
+                        style={{
+                          textAlign: 'center',
+                          padding: '30px',
+                          color: 'var(--text3)',
+                          fontSize: '0.8rem',
+                        }}
+                      >
+                        No trade history
+                      </div>
+                    ) : (
+                      trades.map((order) => (
+                        <div
+                          key={order.id}
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns:
+                              '75px 1fr 50px 60px 100px 1fr 72px minmax(80px,1fr)',
+                            padding: '10px 0',
+                            alignItems: 'center',
+                            fontSize: '0.74rem',
+                            borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                            gap: '6px',
+                            minWidth: '720px',
+                          }}
+                        >
+                          <span style={{ color: 'var(--text3)' }}>
+                            {order.updatedAt || order.createdAt
+                              ? new Date(
+                                  order.updatedAt ?? order.createdAt,
+                                ).toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : '—'}
+                          </span>
+                          <span>{order.pair}</span>
+                          <span
+                            style={{
+                              color:
+                                order.side === 'buy'
+                                  ? 'var(--emerald)'
+                                  : 'var(--red)',
+                              textTransform: 'capitalize',
+                            }}
+                          >
+                            {order.side}
+                          </span>
+                          <span style={{ color: 'var(--text3)' }}>
+                            {(order.type || '—').toString()}
+                          </span>
+                          <span style={{ fontFamily: "'DM Mono', monospace" }}>
+                            {(() => {
+                              const p = Number(order.price)
+                              return Number.isFinite(p) && p > 0
+                                ? `$${p.toLocaleString('en-US')}`
+                                : '—'
+                            })()}
+                          </span>
+                          <span style={{ fontFamily: "'DM Mono', monospace" }}>
+                            {Number(
+                              order.filledAmount ?? order.amount ?? 0,
+                            ).toFixed(4)}
+                          </span>
+                          <span style={{ textTransform: 'capitalize' }}>
+                            {order.status || '—'}
+                          </span>
+                          <span
+                            style={{
+                              color: 'var(--text3)',
+                              fontSize: '0.68rem',
+                            }}
+                          >
+                            {order.createdAt
+                              ? new Date(order.createdAt).toLocaleDateString(
+                                  'en-US',
+                                  {
+                                    month: 'short',
+                                    day: 'numeric',
+                                  },
+                                )
+                              : '—'}
+                          </span>
+                        </div>
+                      ))
+                    )
+                  })()}
+              </div>
             </div>
           </div>
 
@@ -809,11 +1188,22 @@ export default function Trading() {
                   )
                 })}
               </div>
-              <div style={{ fontSize: '11px', color: 'var(--text3)', marginBottom: '8px' }}>
-                Available{' '}
-                <span style={{ color: 'var(--text1)' }}>
-                  ${available.toLocaleString()}
-                </span>
+              <div style={{ padding: '4px 0 8px' }}>
+                <div
+                  style={{
+                    fontSize: '0.7rem',
+                    color: 'var(--text3)',
+                    textAlign: 'center',
+                    marginBottom: '8px',
+                  }}
+                >
+                  Available{' '}
+                  {availableBalance.toLocaleString('en-US', {
+                    minimumFractionDigits: side === 'buy' ? 2 : 4,
+                    maximumFractionDigits: side === 'buy' ? 2 : 4,
+                  })}{' '}
+                  {side === 'buy' ? quoteAsset : baseAsset}
+                </div>
               </div>
               <div style={{ marginBottom: '8px' }}>
                 <div
@@ -883,27 +1273,78 @@ export default function Trading() {
                 />
               </div>
               <div style={{ display: 'flex', gap: '4px', marginBottom: '10px' }}>
-                {[0.25, 0.5, 0.75, 1].map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => applyPct(p)}
-                    style={{
-                      flex: 1,
-                      padding: '6px 2px',
-                      borderRadius: '4px',
-                      border: '0.5px solid var(--navy-b)',
-                      background: 'var(--navy-card)',
-                      color: 'var(--gold)',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    {p === 1 ? 'Max' : `${p * 100}%`}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => handlePctClick(0.25)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 2px',
+                    borderRadius: '4px',
+                    border: '0.5px solid var(--navy-b)',
+                    background: 'var(--navy-card)',
+                    color: 'var(--gold)',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  25%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePctClick(0.5)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 2px',
+                    borderRadius: '4px',
+                    border: '0.5px solid var(--navy-b)',
+                    background: 'var(--navy-card)',
+                    color: 'var(--gold)',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  50%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePctClick(0.75)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 2px',
+                    borderRadius: '4px',
+                    border: '0.5px solid var(--navy-b)',
+                    background: 'var(--navy-card)',
+                    color: 'var(--gold)',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  75%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePctClick(0.99)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 2px',
+                    borderRadius: '4px',
+                    border: '0.5px solid var(--navy-b)',
+                    background: 'var(--navy-card)',
+                    color: 'var(--gold)',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Max
+                </button>
               </div>
               <div style={{ marginBottom: '8px' }}>
                 <div
@@ -943,23 +1384,60 @@ export default function Trading() {
                   })}
                 </span>
               </div>
+              {orderError ? (
+                <div
+                  style={{
+                    background: 'rgba(226,75,74,0.12)',
+                    border: '0.5px solid rgba(226,75,74,0.3)',
+                    color: 'var(--red)',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    marginTop: '8px',
+                    textAlign: 'center',
+                  }}
+                >
+                  {orderError}
+                </div>
+              ) : null}
+              {orderSuccess ? (
+                <div
+                  style={{
+                    background: 'rgba(29,158,117,0.12)',
+                    border: '0.5px solid rgba(29,158,117,0.3)',
+                    color: 'var(--emerald)',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    marginTop: '8px',
+                    textAlign: 'center',
+                  }}
+                >
+                  {orderSuccess}
+                </div>
+              ) : null}
               <button
                 type="button"
+                onClick={handlePlaceOrder}
+                disabled={orderLoading}
                 style={{
                   width: '100%',
-                  padding: '12px',
-                  borderRadius: '8px',
-                  border: 'none',
+                  padding: '14px',
                   background: side === 'buy' ? 'var(--emerald)' : 'var(--red)',
-                  color: 'var(--navy)',
-                  fontWeight: 800,
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  textTransform: 'capitalize',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '0.95rem',
+                  fontWeight: '600',
+                  cursor: orderLoading ? 'not-allowed' : 'pointer',
+                  opacity: orderLoading ? 0.6 : 1,
+                  marginTop: '12px',
+                  fontFamily: '"DM Sans", sans-serif',
                 }}
               >
-                {side} {pair.split('/')[0]}
+                {orderLoading
+                  ? 'Placing order...'
+                  : `${side === 'buy' ? 'Buy' : 'Sell'} ${baseAsset}`}
               </button>
             </div>
           </aside>

@@ -54,6 +54,7 @@ export const pricesAPI = {
 
 export const walletAPI = {
   getBalances: () => api.get('/wallet/balances'),
+  getHistory: () => api.get('/wallet/history'),
   deposit: (data) => api.post('/wallet/deposit', data),
   withdraw: (data) => api.post('/wallet/withdraw', data),
 }
@@ -70,6 +71,14 @@ export const earnAPI = {
   getPositions: () => api.get('/earn/positions'),
   deposit: (data) => api.post('/earn/deposit', data),
   withdraw: (id) => api.post(`/earn/withdraw/${id}`),
+}
+
+export const adminAPI = {
+  getStats: () => api.get('/admin/stats'),
+  getUsers: (params) => api.get('/admin/users', { params }),
+  getOrders: (params) => api.get('/admin/orders', { params }),
+  getUserDetail: (id) => api.get(`/admin/users/${id}`),
+  toggleUserActive: (id) => api.patch(`/admin/users/${id}/toggle`),
 }
 
 export default api

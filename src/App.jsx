@@ -7,6 +7,9 @@ import Wallet from './pages/Wallet.jsx'
 import KYC from './pages/KYC.jsx'
 import Trading from './pages/Trading.jsx'
 import Earn from './pages/Earn.jsx'
+import Admin from './pages/Admin.jsx'
+import Markets from './pages/Markets.jsx'
+import History from './pages/History.jsx'
 
 const placeholder = (name) => (
   <div style={{ color: 'var(--text1)' }}>{name} page</div>
@@ -32,8 +35,9 @@ export default function App() {
         <Route path="/kyc" element={<KYC />} />
         <Route path="/trading" element={<Trading />} />
         <Route path="/earn" element={<Earn />} />
-        <Route path="/markets" element={placeholder('Markets')} />
-        <Route path="/history" element={placeholder('History')} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="/markets" element={<Markets />} />
+        <Route path="/history" element={<History />} />
         <Route path="/security" element={placeholder('Security')} />
         <Route path="/settings" element={placeholder('Settings')} />
       </Routes>
