@@ -10,6 +10,8 @@ import Earn from './pages/Earn.jsx'
 import Admin from './pages/Admin.jsx'
 import Markets from './pages/Markets.jsx'
 import History from './pages/History.jsx'
+import Settings from './pages/Settings.jsx'
+import Security from './pages/Security.jsx'
 
 const placeholder = (name) => (
   <div style={{ color: 'var(--text1)' }}>{name} page</div>
@@ -38,8 +40,8 @@ export default function App() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/markets" element={<Markets />} />
         <Route path="/history" element={<History />} />
-        <Route path="/security" element={placeholder('Security')} />
-        <Route path="/settings" element={placeholder('Settings')} />
+        <Route path="/security" element={<Security />} />
+        <Route path="/settings" element={<Settings />} />
       </Routes>
     </BrowserRouter>
   )

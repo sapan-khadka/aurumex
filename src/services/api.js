@@ -62,6 +62,13 @@ export const kycAPI = {
   submit: (data) => api.post('/kyc/submit', data),
 }
 
+export const userAPI = {
+  getProfile: () => api.get('/users/profile'),
+  updateProfile: (data) => api.patch('/users/profile', data),
+  changePassword: (data) => api.post('/users/change-password', data),
+  toggle2FA: () => api.post('/users/toggle-2fa'),
+}
+
 export const pricesAPI = {
   getAll: () => api.get('/prices'),
   getPair: (pair) => api.get(`/prices/${pair.replace('/', '-')}`),
