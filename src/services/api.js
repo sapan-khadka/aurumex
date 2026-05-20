@@ -15,12 +15,16 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Auto-refresh token on 401
+// 401 → single refresh retry; logout only if refresh fails or no refresh token
 api.interceptors.response.use(
-  (res) => res,
+  (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
+    const originalRequest = error.config
+
+    if (error.response?.status === 401 && !originalRequest?._retry) {
+      originalRequest._retry = true
       const refreshToken = localStorage.getItem('refreshToken')
+
       if (refreshToken) {
         try {
           const res = await axios.post(`${API_BASE}/auth/refresh`, {
@@ -28,14 +32,20 @@ api.interceptors.response.use(
           })
           const newToken = res.data.data.accessToken
           localStorage.setItem('accessToken', newToken)
-          error.config.headers.Authorization = `Bearer ${newToken}`
-          return axios(error.config)
-        } catch {
+          originalRequest.headers.Authorization = `Bearer ${newToken}`
+          return api(originalRequest)
+        } catch (refreshError) {
           localStorage.clear()
-          window.location.href = '/'
+          window.location.href = '/login'
+          return Promise.reject(refreshError)
         }
+      } else {
+        localStorage.clear()
+        window.location.href = '/login'
+        return Promise.reject(error)
       }
     }
+
     return Promise.reject(error)
   },
 )
@@ -45,6 +55,11 @@ export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
   refresh: (token) => api.post('/auth/refresh', { refreshToken: token }),
+}
+
+export const kycAPI = {
+  getStatus: () => api.get('/kyc/status'),
+  submit: (data) => api.post('/kyc/submit', data),
 }
 
 export const pricesAPI = {
