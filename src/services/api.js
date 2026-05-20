@@ -69,6 +69,7 @@ export const ordersAPI = {
 export const earnAPI = {
   getProducts: () => api.get('/earn/products'),
   getPositions: () => api.get('/earn/positions'),
+  getSummary: () => api.get('/earn/summary'),
   deposit: (data) => api.post('/earn/deposit', data),
   withdraw: (id) => api.post(`/earn/withdraw/${id}`),
 }
