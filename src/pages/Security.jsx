@@ -139,10 +139,14 @@ export default function Security() {
     setPwdLoading(true)
     try {
       await userAPI.changePassword({ currentPassword, newPassword })
-      setPwdSuccess('Password updated successfully.')
+      setPwdSuccess('Password updated. Signing you out…')
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
+      setTimeout(() => {
+        localStorage.clear()
+        window.location.href = '/login'
+      }, 1500)
     } catch (err) {
       setPwdError(err.response?.data?.message || 'Could not update password.')
     } finally {

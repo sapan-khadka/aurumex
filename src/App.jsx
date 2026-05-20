@@ -36,6 +36,7 @@ export default function App() {
         <Route path="/wallet" element={<Wallet />} />
         <Route path="/kyc" element={<KYC />} />
         <Route path="/trading" element={<Trading />} />
+        <Route path="/trade" element={<Trading />} />
         <Route path="/earn" element={<Earn />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/markets" element={<Markets />} />

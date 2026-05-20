@@ -97,8 +97,17 @@ export default function Trading() {
     if (typeof p === 'string' && p.includes('/')) {
       setPair(p)
       navigate(location.pathname, { replace: true, state: {} })
+      return
     }
-  }, [location.pathname, location.state?.pair, navigate])
+    const raw = new URLSearchParams(location.search).get('pair')
+    if (raw && /USDT$/i.test(raw)) {
+      const base = raw.replace(/USDT$/i, '').trim().toUpperCase()
+      if (base) {
+        setPair(`${base}/USDT`)
+        navigate(location.pathname, { replace: true })
+      }
+    }
+  }, [location.pathname, location.state?.pair, location.search, navigate])
 
   useEffect(() => {
     const fetchPrices = async () => {

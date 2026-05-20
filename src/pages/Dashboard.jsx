@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   PieChart,
   Pie,
@@ -40,10 +40,14 @@ const ASSET_FILL = {
   DEFAULT: 'var(--purple)',
 }
 
-function ActionBtn({ bg, color, icon, label }) {
+function ActionBtn({ bg, color, icon, label, onClick }) {
+  const [hover, setHover] = useState(false)
   return (
     <button
       type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         flex: 1,
         display: 'flex',
@@ -59,6 +63,9 @@ function ActionBtn({ bg, color, icon, label }) {
         fontFamily: 'inherit',
         fontSize: '12px',
         fontWeight: 600,
+        opacity: hover ? 0.92 : 1,
+        transform: hover ? 'translateY(-1px)' : 'none',
+        transition: 'opacity 0.15s ease, transform 0.15s ease',
       }}
     >
       <i className={`ti ${icon}`} style={{ fontSize: '22px' }} aria-hidden />
@@ -98,6 +105,8 @@ export default function Dashboard() {
   const [orders, setOrders] = useState([])
   const [prices, setPrices] = useState({})
   const [loading, setLoading] = useState(true)
+  const [hoverHolding, setHoverHolding] = useState(null)
+  const [hoverTx, setHoverTx] = useState(null)
   const user = JSON.parse(localStorage.getItem('user') || '{}')
 
   useEffect(() => {
@@ -265,6 +274,7 @@ export default function Dashboard() {
             </span>
             <button
               type="button"
+              onClick={() => navigate('/history')}
               style={{
                 background: 'none',
                 border: 'none',
@@ -272,22 +282,29 @@ export default function Dashboard() {
                 cursor: 'pointer',
                 color: 'var(--text2)',
                 display: 'flex',
+                borderRadius: '6px',
               }}
               aria-label="Notifications"
             >
               <i className="ti ti-bell" style={{ fontSize: '20px' }} />
             </button>
-            <Link
-              to="/settings"
+            <button
+              type="button"
+              onClick={() => navigate('/settings')}
               style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
                 color: 'var(--text2)',
                 display: 'flex',
                 lineHeight: 0,
+                borderRadius: '6px',
               }}
               aria-label="Settings"
             >
               <i className="ti ti-settings" style={{ fontSize: '20px' }} />
-            </Link>
+            </button>
           </div>
         </header>
 
@@ -353,18 +370,21 @@ export default function Dashboard() {
                   color="var(--navy)"
                   icon="ti-cash-banknote"
                   label="Deposit"
+                  onClick={() => navigate('/wallet', { state: { action: 'deposit' } })}
                 />
                 <ActionBtn
                   bg="var(--gold)"
                   color="var(--navy)"
                   icon="ti-building-bank"
                   label="Withdraw"
+                  onClick={() => navigate('/wallet', { state: { action: 'withdraw' } })}
                 />
                 <ActionBtn
                   bg="var(--blue)"
                   color="var(--navy)"
                   icon="ti-chart-candle"
                   label="Trade"
+                  onClick={() => navigate('/trade')}
                 />
               </div>
             </div>
@@ -475,12 +495,41 @@ export default function Dashboard() {
                   walletData.wallets.map((wallet) => (
                     <div
                       key={wallet.asset}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (wallet.asset === 'USDT') {
+                          navigate('/trade')
+                          return
+                        }
+                        navigate(`/trade?pair=${wallet.asset}USDT`)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          if (wallet.asset === 'USDT') {
+                            navigate('/trade')
+                          } else {
+                            navigate(`/trade?pair=${wallet.asset}USDT`)
+                          }
+                        }
+                      }}
+                      onMouseEnter={() => setHoverHolding(wallet.asset)}
+                      onMouseLeave={() => setHoverHolding(null)}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '11px 0',
+                        padding: '11px 10px',
+                        margin: '0 -6px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        background:
+                          hoverHolding === wallet.asset
+                            ? 'rgba(201,166,70,0.08)'
+                            : 'transparent',
                         borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                        transition: 'background 0.15s ease',
                       }}
                     >
                       <div
@@ -569,12 +618,31 @@ export default function Dashboard() {
                   orders.slice(0, 4).map((order) => (
                     <div
                       key={order.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => navigate('/history')}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          navigate('/history')
+                        }
+                      }}
+                      onMouseEnter={() => setHoverTx(order.id)}
+                      onMouseLeave={() => setHoverTx(null)}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '9px 0',
+                        padding: '9px 10px',
+                        margin: '0 -6px',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        background:
+                          hoverTx === order.id
+                            ? 'rgba(201,166,70,0.08)'
+                            : 'transparent',
                         borderBottom: '0.5px solid rgba(255,255,255,0.04)',
+                        transition: 'background 0.15s ease',
                       }}
                     >
                       <div

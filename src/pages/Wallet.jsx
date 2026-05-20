@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar.jsx'
 import { walletAPI } from '../services/api'
 
@@ -113,6 +113,7 @@ function Select({ value, onChange, options }) {
 
 export default function Wallet() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [walletData, setWalletData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selectedAsset, setSelectedAsset] = useState('USDT')
@@ -124,6 +125,10 @@ export default function Wallet() {
   const [withdrawError, setWithdrawError] = useState('')
   const [withdrawSuccess, setWithdrawSuccess] = useState('')
   const [withdrawLoading, setWithdrawLoading] = useState(false)
+
+  const scrollTo = (id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   useEffect(() => {
     const fetchWallet = async () => {
@@ -141,6 +146,18 @@ export default function Wallet() {
     }
     fetchWallet()
   }, [navigate])
+
+  useEffect(() => {
+    const action = location.state?.action
+    if (loading) return
+    if (action !== 'deposit' && action !== 'withdraw') return
+
+    const id = action === 'deposit' ? 'wallet-deposit' : 'wallet-withdraw'
+    requestAnimationFrame(() => scrollTo(id))
+
+    window.history.replaceState({}, '')
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
+  }, [loading, location.state, navigate, location.pathname, location.search])
 
   const handleWithdraw = async (e) => {
     e.preventDefault()
@@ -167,10 +184,6 @@ export default function Wallet() {
   const networkFee = 1.2
   const amt = parseFloat(withdrawForm.amount) || 0
   const youReceive = Math.max(0, amt - networkFee)
-
-  const scrollTo = (id) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
 
   const setMaxAmount = () => {
     const w = walletData?.wallets?.find((x) => x.asset === withdrawForm.asset)
