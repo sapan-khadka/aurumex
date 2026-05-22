@@ -35,6 +35,12 @@ const ACCOUNT_NAV = [
     to: '/security',
   },
   {
+    id: 'support',
+    label: 'Support',
+    icon: 'ti-lifebuoy',
+    to: '/support',
+  },
+  {
     id: 'settings',
     label: 'Settings',
     icon: 'ti-settings',

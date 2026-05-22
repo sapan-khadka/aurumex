@@ -4,18 +4,59 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
+  Tooltip,
   ResponsiveContainer,
 } from 'recharts'
 import Sidebar from '../components/layout/Sidebar.jsx'
 import { walletAPI, ordersAPI, pricesAPI } from '../services/api'
 
-const DISTRIBUTION_FALLBACK = [
-  { name: 'GOLD', value: 41, fill: 'var(--gold)' },
-  { name: 'BTC', value: 28, fill: 'var(--emerald)' },
-  { name: 'ETH', value: 18, fill: 'var(--blue)' },
-  { name: 'Other', value: 13, fill: 'var(--text3)' },
-]
+const fmtUsd = (n) =>
+  `$${Number(n || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+
+function DistributionTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const p = payload[0]?.payload
+  if (!p) return null
+  return (
+    <div
+      style={{
+        background: 'var(--navy-mid)',
+        border: '0.5px solid var(--navy-b)',
+        borderRadius: '8px',
+        padding: '8px 12px',
+        fontSize: '12px',
+        color: 'var(--text1)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          marginBottom: '3px',
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: p.fill,
+            display: 'inline-block',
+          }}
+        />
+        <span style={{ fontWeight: 600 }}>{p.name}</span>
+      </div>
+      <div style={{ fontFamily: 'DM Mono, monospace' }}>
+        {fmtUsd(p.usd)}
+        <span style={{ color: 'var(--text3)' }}> · {p.pct.toFixed(1)}%</span>
+      </div>
+    </div>
+  )
+}
 
 const card = {
   background: 'var(--navy-card)',
@@ -75,28 +116,21 @@ function ActionBtn({ bg, color, icon, label, onClick }) {
 }
 
 function buildDistribution(wallets) {
-  if (!wallets?.length) return DISTRIBUTION_FALLBACK
+  if (!wallets?.length) return []
   const total = wallets.reduce((s, w) => s + (Number(w.usdValue) || 0), 0)
-  if (!Number.isFinite(total) || total <= 0) return DISTRIBUTION_FALLBACK
-  const items = wallets
+  if (!Number.isFinite(total) || total <= 0) return []
+  return wallets
     .map((w) => {
-      const v = ((Number(w.usdValue) || 0) / total) * 100
+      const usd = Number(w.usdValue) || 0
       return {
         name: w.asset,
-        value: Math.max(0, Math.round(v * 10) / 10),
+        usd,
+        pct: (usd / total) * 100,
         fill: ASSET_FILL[w.asset] || ASSET_FILL.DEFAULT,
       }
     })
-    .filter((d) => d.value > 0)
-  if (!items.length) return DISTRIBUTION_FALLBACK
-  const sum = items.reduce((s, i) => s + i.value, 0)
-  if (sum < 99.5 && items.length) {
-    items[items.length - 1] = {
-      ...items[items.length - 1],
-      value: Math.round((items[items.length - 1].value + (100 - sum)) * 10) / 10,
-    }
-  }
-  return items
+    .filter((d) => d.usd > 0)
+    .sort((a, b) => b.usd - a.usd)
 }
 
 export default function Dashboard() {
@@ -391,56 +425,139 @@ export default function Dashboard() {
 
             <div style={{ ...card, padding: '1.25rem' }}>
               <div style={labelUpper}>Asset Distribution</div>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  minHeight: '220px',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0, height: 220 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                      <Pie
-                        data={distributionData}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="42%"
-                        cy="50%"
-                        innerRadius={0}
-                        outerRadius={88}
-                        paddingAngle={2}
-                        stroke="var(--navy-card)"
-                        strokeWidth={1}
-                      >
-                        {distributionData.map((entry) => (
-                          <Cell key={entry.name} fill={entry.fill} />
-                        ))}
-                      </Pie>
-                      <Legend
-                        verticalAlign="middle"
-                        align="right"
-                        layout="vertical"
-                        iconType="circle"
-                        iconSize={8}
-                        wrapperStyle={{
-                          paddingLeft: '8px',
-                          fontSize: '12px',
-                          color: 'var(--text2)',
-                        }}
-                        formatter={(value, entry) => (
-                          <span style={{ color: 'var(--text1)' }}>
-                            {value}{' '}
-                            <span style={{ color: 'var(--text3)' }}>
-                              {entry.payload?.value}%
-                            </span>
-                          </span>
-                        )}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
+              {distributionData.length === 0 ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: '220px',
+                    gap: '14px',
+                  }}
+                >
+                  <svg width="120" height="120" viewBox="0 0 120 120">
+                    <circle
+                      cx="60"
+                      cy="60"
+                      r="46"
+                      fill="none"
+                      stroke="var(--navy-b2)"
+                      strokeWidth="16"
+                    />
+                  </svg>
+                  <div style={{ textAlign: 'center' }}>
+                    <div
+                      style={{
+                        fontSize: '0.85rem',
+                        color: 'var(--text2)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      No assets yet
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        color: 'var(--text3)',
+                        marginTop: '4px',
+                      }}
+                    >
+                      Deposit or trade to build your portfolio
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    minHeight: '220px',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0, height: 220 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                        <Pie
+                          data={distributionData}
+                          dataKey="usd"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={48}
+                          outerRadius={88}
+                          paddingAngle={2}
+                          stroke="var(--navy-card)"
+                          strokeWidth={1}
+                        >
+                          {distributionData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.fill} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          content={<DistributionTooltip />}
+                          cursor={{ fill: 'transparent' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div
+                    style={{
+                      width: '150px',
+                      flexShrink: 0,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      paddingLeft: '8px',
+                    }}
+                  >
+                    {distributionData.map((d) => (
+                      <div
+                        key={d.name}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '8px',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 9,
+                            height: 9,
+                            borderRadius: '50%',
+                            background: d.fill,
+                            marginTop: '4px',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontSize: '0.78rem',
+                              color: 'var(--text1)',
+                              fontWeight: 500,
+                            }}
+                          >
+                            {d.name}{' '}
+                            <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
+                              {d.pct.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              fontFamily: 'DM Mono, monospace',
+                              fontSize: '0.72rem',
+                              color: 'var(--text2)',
+                            }}
+                          >
+                            {fmtUsd(d.usd)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

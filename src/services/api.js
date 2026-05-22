@@ -104,4 +104,18 @@ export const adminAPI = {
   toggleUserActive: (id) => api.patch(`/admin/users/${id}/toggle`),
 }
 
+export const supportAPI = {
+  createTicket: (data) => api.post('/support/tickets', data),
+  getMyTickets: () => api.get('/support/tickets'),
+  getTicket: (id) => api.get(`/support/tickets/${id}`),
+  addMessage: (id, message) =>
+    api.post(`/support/tickets/${id}/messages`, { message }),
+  adminGetTickets: () => api.get('/support/admin/tickets'),
+  adminGetTicket: (id) => api.get(`/support/admin/tickets/${id}`),
+  adminReply: (id, message) =>
+    api.post(`/support/admin/tickets/${id}/reply`, { message }),
+  adminUpdateStatus: (id, status) =>
+    api.patch(`/support/admin/tickets/${id}/status`, { status }),
+}
+
 export default api

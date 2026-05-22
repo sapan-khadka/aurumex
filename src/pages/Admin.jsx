@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/layout/Sidebar.jsx'
-import { adminAPI } from '../services/api'
+import { adminAPI, supportAPI } from '../services/api'
 import { userIsAdmin } from '../utils/adminAccess.js'
 
 const ORDER_PAIRS = [
@@ -46,6 +46,109 @@ function normalizeOrders(payload) {
   if (Array.isArray(d)) return d
   if (Array.isArray(d?.orders)) return d.orders
   return []
+}
+
+function normalizeAdminTickets(payload) {
+  const d = payload?.data?.data ?? payload?.data ?? payload
+  if (Array.isArray(d)) return d
+  if (Array.isArray(d?.tickets)) return d.tickets
+  return []
+}
+
+function normalizeAdminTicket(raw) {
+  const d = raw?.data?.data ?? raw?.data ?? raw ?? {}
+  return d && typeof d === 'object' ? d : {}
+}
+
+function sortTicketsByUpdatedDesc(list) {
+  return [...list].sort((a, b) => {
+    const tb = new Date(
+      b.updatedAt ?? b.updated_at ?? b.lastMessageAt ?? b.createdAt ?? 0,
+    ).getTime()
+    const ta = new Date(
+      a.updatedAt ?? a.updated_at ?? a.lastMessageAt ?? a.createdAt ?? 0,
+    ).getTime()
+    return tb - ta
+  })
+}
+
+function ticketUpdatedLabel(t) {
+  const d = t?.updatedAt ?? t?.updated_at ?? t?.lastMessageAt ?? t?.createdAt
+  if (!d) return '—'
+  try {
+    return new Date(d).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return '—'
+  }
+}
+
+function normalizeAdminMessages(ticket) {
+  const msgs = ticket?.messages ?? ticket?.Messages ?? []
+  if (!Array.isArray(msgs)) return []
+  return [...msgs].sort((a, b) => {
+    const ta = new Date(a.createdAt ?? a.created_at ?? a.sentAt ?? 0).getTime()
+    const tb = new Date(b.createdAt ?? b.created_at ?? b.sentAt ?? 0).getTime()
+    return ta - tb
+  })
+}
+
+function adminMessageBody(m) {
+  return m?.message ?? m?.body ?? m?.text ?? m?.content ?? ''
+}
+
+function adminMessageRole(m) {
+  const r = String(
+    m?.senderRole ?? m?.sender_role ?? m?.role ?? m?.sender ?? '',
+  ).toLowerCase()
+  if (r === 'support' || r === 'agent' || r === 'admin' || r === 'staff')
+    return 'support'
+  return 'user'
+}
+
+function adminMessageTimeLabel(m) {
+  const d = m?.createdAt ?? m?.created_at ?? m?.sentAt
+  if (!d) return ''
+  try {
+    return new Date(d).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return ''
+  }
+}
+
+function supportStatusBadgeStyle(status) {
+  const s = String(status || 'open').toLowerCase()
+  if (s === 'answered' || s === 'resolved')
+    return {
+      background: 'rgba(29,158,117,0.12)',
+      color: 'var(--emerald)',
+      border: '0.5px solid rgba(29,158,117,0.35)',
+    }
+  if (s === 'closed')
+    return {
+      background: 'rgba(138,143,168,0.08)',
+      color: 'var(--text3)',
+      border: '0.5px solid var(--navy-b)',
+    }
+  return {
+    background: 'rgba(138,143,168,0.12)',
+    color: 'var(--text2)',
+    border: '0.5px solid var(--navy-b)',
+  }
+}
+
+function adminTicketRowId(t) {
+  return t?.id ?? t?._id ?? t?.uuid
 }
 
 function pickStat(stats, keys, fallback = null) {
@@ -97,6 +200,19 @@ export default function Admin() {
   const [orderPair, setOrderPair] = useState('')
   const [toggleBusyId, setToggleBusyId] = useState(null)
 
+  const [supportTickets, setSupportTickets] = useState([])
+  const [supportLoading, setSupportLoading] = useState(false)
+  const [supportListError, setSupportListError] = useState('')
+  const [adminSupportTicketId, setAdminSupportTicketId] = useState(null)
+  const [adminTicketThread, setAdminTicketThread] = useState(null)
+  const [adminThreadLoading, setAdminThreadLoading] = useState(false)
+  const [adminThreadError, setAdminThreadError] = useState('')
+  const [adminReplyText, setAdminReplyText] = useState('')
+  const [adminReplyLoading, setAdminReplyLoading] = useState(false)
+  const [adminReplyError, setAdminReplyError] = useState('')
+  const [adminStatusLoading, setAdminStatusLoading] = useState(false)
+  const [adminStatusError, setAdminStatusError] = useState('')
+
   useEffect(() => {
     if (!userIsAdmin(user)) {
       navigate('/dashboard', { replace: true })
@@ -104,6 +220,17 @@ export default function Admin() {
     }
     setAuthorized(true)
   }, [navigate])
+
+  useEffect(() => {
+    if (tab !== 'support') {
+      setAdminSupportTicketId(null)
+      setAdminTicketThread(null)
+      setAdminReplyText('')
+      setAdminReplyError('')
+      setAdminThreadError('')
+      setAdminStatusError('')
+    }
+  }, [tab])
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 400)
@@ -142,6 +269,36 @@ export default function Admin() {
     }
   }, [orderStatus, orderPair])
 
+  const fetchSupportTickets = useCallback(async () => {
+    setSupportListError('')
+    setSupportLoading(true)
+    try {
+      const res = await supportAPI.adminGetTickets()
+      const rows = normalizeAdminTickets(res.data)
+      setSupportTickets(sortTicketsByUpdatedDesc(rows))
+    } catch (err) {
+      setSupportListError(err.response?.data?.message || 'Could not load support tickets.')
+      setSupportTickets([])
+    } finally {
+      setSupportLoading(false)
+    }
+  }, [])
+
+  const fetchAdminTicketThread = useCallback(async (id) => {
+    if (id == null) return
+    setAdminThreadError('')
+    setAdminThreadLoading(true)
+    try {
+      const res = await supportAPI.adminGetTicket(id)
+      setAdminTicketThread(normalizeAdminTicket(res.data))
+    } catch (err) {
+      setAdminThreadError(err.response?.data?.message || 'Could not load ticket.')
+      setAdminTicketThread(null)
+    } finally {
+      setAdminThreadLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!authorized) return
 
@@ -150,10 +307,19 @@ export default function Admin() {
       fetchStats()
       if (tab === 'users') fetchUsers()
       if (tab === 'orders') fetchOrders()
+      if (tab === 'support' && adminSupportTicketId == null) fetchSupportTickets()
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [authorized, tab, fetchStats, fetchUsers, fetchOrders])
+  }, [
+    authorized,
+    tab,
+    adminSupportTicketId,
+    fetchStats,
+    fetchUsers,
+    fetchOrders,
+    fetchSupportTickets,
+  ])
 
   useEffect(() => {
     if (!authorized || tab !== 'users') return
@@ -164,6 +330,54 @@ export default function Admin() {
     if (!authorized || tab !== 'orders') return
     fetchOrders()
   }, [authorized, tab, orderStatus, orderPair, fetchOrders])
+
+  useEffect(() => {
+    if (!authorized || tab !== 'support') return
+    if (adminSupportTicketId != null) return
+    fetchSupportTickets()
+  }, [authorized, tab, adminSupportTicketId, fetchSupportTickets])
+
+  useEffect(() => {
+    if (!authorized || tab !== 'support' || adminSupportTicketId == null) return
+    fetchAdminTicketThread(adminSupportTicketId)
+  }, [authorized, tab, adminSupportTicketId, fetchAdminTicketThread])
+
+  const handleAdminSupportReply = async (e) => {
+    e.preventDefault()
+    if (adminSupportTicketId == null) return
+    setAdminReplyError('')
+    const text = adminReplyText.trim()
+    if (!text) {
+      setAdminReplyError('Enter a message to send.')
+      return
+    }
+    setAdminReplyLoading(true)
+    try {
+      await supportAPI.adminReply(adminSupportTicketId, text)
+      setAdminReplyText('')
+      await fetchAdminTicketThread(adminSupportTicketId)
+      await fetchSupportTickets()
+    } catch (err) {
+      setAdminReplyError(err.response?.data?.message || 'Could not send reply.')
+    } finally {
+      setAdminReplyLoading(false)
+    }
+  }
+
+  const handleAdminTicketStatus = async (status) => {
+    if (adminSupportTicketId == null) return
+    setAdminStatusError('')
+    setAdminStatusLoading(true)
+    try {
+      await supportAPI.adminUpdateStatus(adminSupportTicketId, status)
+      await fetchAdminTicketThread(adminSupportTicketId)
+      await fetchSupportTickets()
+    } catch (err) {
+      setAdminStatusError(err.response?.data?.message || 'Could not update status.')
+    } finally {
+      setAdminStatusLoading(false)
+    }
+  }
 
   const handleToggleUser = async (row) => {
     const id = userRowId(row)
@@ -391,6 +605,7 @@ export default function Admin() {
               {[
                 { id: 'users', label: 'Users' },
                 { id: 'orders', label: 'Orders' },
+                { id: 'support', label: 'Support' },
               ].map((t) => (
                 <button
                   key={t.id}
@@ -593,7 +808,7 @@ export default function Admin() {
                     </table>
                   </div>
                 </>
-              ) : (
+              ) : tab === 'orders' ? (
                 <>
                   <div
                     style={{
@@ -755,6 +970,419 @@ export default function Admin() {
                       </tbody>
                     </table>
                   </div>
+                </>
+              ) : (
+                <>
+                  {adminSupportTicketId == null ? (
+                    <>
+                      {supportListError ? (
+                        <div
+                          style={{
+                            background: 'var(--red-bg)',
+                            border: '0.5px solid var(--red-b)',
+                            color: 'var(--red)',
+                            padding: '10px 14px',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            marginBottom: '14px',
+                          }}
+                        >
+                          {supportListError}
+                        </div>
+                      ) : null}
+                      {supportLoading ? (
+                        <div
+                          style={{
+                            padding: '28px',
+                            textAlign: 'center',
+                            color: 'var(--text3)',
+                            fontSize: '13px',
+                          }}
+                        >
+                          Loading tickets…
+                        </div>
+                      ) : (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table
+                            style={{
+                              width: '100%',
+                              borderCollapse: 'collapse',
+                              minWidth: '720px',
+                            }}
+                          >
+                            <thead>
+                              <tr>
+                                {['User', 'Subject', 'Category', 'Status', 'Updated'].map(
+                                  (h) => (
+                                    <th key={h} style={thStyle}>
+                                      {h}
+                                    </th>
+                                  ),
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {supportTickets.length === 0 ? (
+                                <tr>
+                                  <td
+                                    colSpan={5}
+                                    style={{
+                                      ...tdStyle,
+                                      textAlign: 'center',
+                                      color: 'var(--text3)',
+                                      padding: '28px',
+                                    }}
+                                  >
+                                    No support tickets yet
+                                  </td>
+                                </tr>
+                              ) : (
+                                supportTickets.map((t, idx) => {
+                                  const rid = adminTicketRowId(t) ?? `st-${idx}`
+                                  const userEmail =
+                                    t.user_email ??
+                                    t.userEmail ??
+                                    t.email ??
+                                    t.user?.email ??
+                                    '—'
+                                  const stat = t.status ?? t.state ?? 'open'
+                                  const badges = supportStatusBadgeStyle(stat)
+                                  return (
+                                    <tr
+                                      key={rid}
+                                      onClick={() => setAdminSupportTicketId(rid)}
+                                      style={{ cursor: 'pointer' }}
+                                    >
+                                      <td style={tdStyle}>{userEmail}</td>
+                                      <td style={tdStyle}>
+                                        {t.subject ?? t.title ?? '—'}
+                                      </td>
+                                      <td style={{ ...tdStyle, color: 'var(--text2)' }}>
+                                        {t.category ?? '—'}
+                                      </td>
+                                      <td style={tdStyle}>
+                                        <span
+                                          style={{
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            padding: '4px 10px',
+                                            borderRadius: '999px',
+                                            textTransform: 'capitalize',
+                                            ...badges,
+                                          }}
+                                        >
+                                          {stat}
+                                        </span>
+                                      </td>
+                                      <td style={{ ...tdStyle, color: 'var(--text3)' }}>
+                                        {ticketUpdatedLabel(t)}
+                                      </td>
+                                    </tr>
+                                  )
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdminSupportTicketId(null)
+                          setAdminTicketThread(null)
+                          setAdminReplyText('')
+                          setAdminReplyError('')
+                          setAdminThreadError('')
+                          setAdminStatusError('')
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          marginBottom: '14px',
+                          color: 'var(--gold)',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        ← Back to tickets
+                      </button>
+
+                      {adminThreadLoading ? (
+                        <div style={{ color: 'var(--text3)', padding: '20px 0' }}>
+                          Loading conversation…
+                        </div>
+                      ) : adminThreadError ? (
+                        <div
+                          style={{
+                            background: 'var(--red-bg)',
+                            border: '0.5px solid var(--red-b)',
+                            color: 'var(--red)',
+                            padding: '10px 14px',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {adminThreadError}
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            style={{
+                              marginBottom: '16px',
+                              padding: '14px',
+                              background: 'var(--navy-card2)',
+                              borderRadius: '8px',
+                              border: '0.5px solid var(--navy-b)',
+                            }}
+                          >
+                            <div style={{ ...labelUpper, marginBottom: '6px' }}>
+                              Customer
+                            </div>
+                            <div
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: 600,
+                                color: 'var(--text1)',
+                                marginBottom: '4px',
+                              }}
+                            >
+                              {adminTicketThread?.user_full_name ??
+                                adminTicketThread?.userFullName ??
+                                adminTicketThread?.user?.full_name ??
+                                adminTicketThread?.user?.fullName ??
+                                'Customer'}
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text2)' }}>
+                              {adminTicketThread?.user_email ??
+                                adminTicketThread?.userEmail ??
+                                adminTicketThread?.email ??
+                                adminTicketThread?.user?.email ??
+                                '—'}
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              ...labelUpper,
+                              marginBottom: '8px',
+                            }}
+                          >
+                            {adminTicketThread?.subject ??
+                              adminTicketThread?.title ??
+                              'Conversation'}
+                          </div>
+
+                          {adminStatusError ? (
+                            <div
+                              style={{
+                                background: 'var(--red-bg)',
+                                border: '0.5px solid var(--red-b)',
+                                color: 'var(--red)',
+                                padding: '8px 12px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                marginBottom: '12px',
+                              }}
+                            >
+                              {adminStatusError}
+                            </div>
+                          ) : null}
+
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              flexWrap: 'wrap',
+                              marginBottom: '14px',
+                            }}
+                          >
+                            <span style={{ fontSize: '11px', color: 'var(--text3)' }}>
+                              Status:
+                            </span>
+                            {['open', 'answered', 'closed'].map((st) => {
+                              const active =
+                                String(
+                                  adminTicketThread?.status ??
+                                    adminTicketThread?.state ??
+                                    '',
+                                ).toLowerCase() === st
+                              return (
+                                <button
+                                  key={st}
+                                  type="button"
+                                  disabled={adminStatusLoading}
+                                  onClick={() => handleAdminTicketStatus(st)}
+                                  style={{
+                                    padding: '6px 14px',
+                                    borderRadius: '6px',
+                                    border: active
+                                      ? '0.5px solid var(--gold)'
+                                      : '0.5px solid var(--navy-b)',
+                                    background: active
+                                      ? 'rgba(201,166,70,0.15)'
+                                      : 'transparent',
+                                    color: active ? 'var(--gold)' : 'var(--text2)',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: adminStatusLoading
+                                      ? 'not-allowed'
+                                      : 'pointer',
+                                    fontFamily: 'inherit',
+                                    textTransform: 'capitalize',
+                                    opacity: adminStatusLoading ? 0.65 : 1,
+                                  }}
+                                >
+                                  {st}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '12px',
+                              marginBottom: '18px',
+                              maxHeight: '380px',
+                              overflowY: 'auto',
+                              paddingRight: '4px',
+                            }}
+                          >
+                            {normalizeAdminMessages(adminTicketThread).map((m, i) => {
+                              const role = adminMessageRole(m)
+                              const isSupport = role === 'support'
+                              const body = adminMessageBody(m)
+                              const ts = adminMessageTimeLabel(m)
+                              const customerName =
+                                adminTicketThread?.user_full_name ??
+                                adminTicketThread?.userFullName ??
+                                adminTicketThread?.user?.full_name ??
+                                adminTicketThread?.user?.fullName ??
+                                'Customer'
+                              return (
+                                <div
+                                  key={m.id ?? m._id ?? i}
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: isSupport ? 'flex-end' : 'flex-start',
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: '10px',
+                                      fontWeight: 600,
+                                      color: isSupport ? 'var(--gold)' : 'var(--text3)',
+                                      marginBottom: '4px',
+                                    }}
+                                  >
+                                    {isSupport ? 'AURUMEX Support' : customerName}
+                                  </div>
+                                  <div
+                                    style={{
+                                      maxWidth: '88%',
+                                      padding: '12px 14px',
+                                      borderRadius: '10px',
+                                      fontSize: '13px',
+                                      lineHeight: 1.5,
+                                      color: 'var(--text1)',
+                                      background: isSupport
+                                        ? 'rgba(201,166,70,0.12)'
+                                        : 'var(--navy)',
+                                      border: isSupport
+                                        ? '0.5px solid var(--gold-dim)'
+                                        : '0.5px solid var(--navy-b)',
+                                      textAlign: 'left',
+                                    }}
+                                  >
+                                    {body}
+                                  </div>
+                                  {ts ? (
+                                    <div
+                                      style={{
+                                        fontSize: '10px',
+                                        color: 'var(--text3)',
+                                        marginTop: '4px',
+                                      }}
+                                    >
+                                      {ts}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
+                          </div>
+
+                          <form onSubmit={handleAdminSupportReply}>
+                            {adminReplyError ? (
+                              <div
+                                style={{
+                                  background: 'var(--red-bg)',
+                                  border: '0.5px solid var(--red-b)',
+                                  color: 'var(--red)',
+                                  padding: '8px 12px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  marginBottom: '10px',
+                                }}
+                              >
+                                {adminReplyError}
+                              </div>
+                            ) : null}
+                            <textarea
+                              value={adminReplyText}
+                              onChange={(e) => setAdminReplyText(e.target.value)}
+                              rows={3}
+                              placeholder="Type your reply…"
+                              style={{
+                                width: '100%',
+                                boxSizing: 'border-box',
+                                marginBottom: '10px',
+                                padding: '10px 12px',
+                                borderRadius: '8px',
+                                border: '0.5px solid var(--navy-b2)',
+                                background: 'var(--navy-card2)',
+                                color: 'var(--text1)',
+                                fontFamily: 'inherit',
+                                fontSize: '13px',
+                                resize: 'vertical',
+                                minHeight: '88px',
+                              }}
+                            />
+                            <button
+                              type="submit"
+                              disabled={adminReplyLoading}
+                              style={{
+                                padding: '11px 22px',
+                                background: adminReplyLoading
+                                  ? 'var(--text3)'
+                                  : 'var(--gold)',
+                                color: 'var(--navy)',
+                                border: 'none',
+                                borderRadius: '6px',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                cursor: adminReplyLoading
+                                  ? 'not-allowed'
+                                  : 'pointer',
+                                fontFamily: 'inherit',
+                              }}
+                            >
+                              {adminReplyLoading ? 'Sending…' : 'Send Reply'}
+                            </button>
+                          </form>
+                        </>
+                      )}
+                    </>
+                  )}
                 </>
               )}
             </div>

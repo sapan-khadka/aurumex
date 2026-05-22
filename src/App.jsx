@@ -12,6 +12,7 @@ import Markets from './pages/Markets.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
 import Security from './pages/Security.jsx'
+import Support from './pages/Support.jsx'
 
 const placeholder = (name) => (
   <div style={{ color: 'var(--text1)' }}>{name} page</div>
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/history" element={<History />} />
         <Route path="/security" element={<Security />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/support" element={<Support />} />
       </Routes>
     </BrowserRouter>
   )
