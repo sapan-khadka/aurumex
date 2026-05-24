@@ -86,8 +86,10 @@ function normalizeTicketsPayload(raw) {
 }
 
 function normalizeTicketPayload(raw) {
-  const d = raw?.data?.data ?? raw?.data ?? raw ?? {}
-  return d && typeof d === 'object' ? d : {}
+  // Backend shape: { success, data: { ticket: {...messages} } }
+  const body = raw?.data?.data ?? raw?.data ?? raw ?? {}
+  const ticket = body?.ticket ?? body?.data?.ticket ?? body
+  return ticket && typeof ticket === 'object' ? ticket : {}
 }
 
 function normalizeMessages(ticket) {

@@ -56,8 +56,12 @@ function normalizeAdminTickets(payload) {
 }
 
 function normalizeAdminTicket(raw) {
-  const d = raw?.data?.data ?? raw?.data ?? raw ?? {}
-  return d && typeof d === 'object' ? d : {}
+  // Backend shape: { success, data: { ticket: {...messages} } }
+  // Peel the wrappers until we reach the actual ticket object — not the
+  // { ticket } wrapper. Works whether the loader passes res or res.data.
+  const body = raw?.data?.data ?? raw?.data ?? raw ?? {}
+  const ticket = body?.ticket ?? body?.data?.ticket ?? body
+  return ticket && typeof ticket === 'object' ? ticket : {}
 }
 
 function sortTicketsByUpdatedDesc(list) {
